@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<ServiceCallout name="TC-Admit" continueOnError="true" enabled="true">
+    <DisplayName>TC-Admit</DisplayName>
+    <!-- Fail open: a timeout or error leaves tcAdmit without a 200 answer, and TC-Decide lets the call through. -->
+    <Request variable="tcAdmitRequest" clearPayload="true">
+        <Set>
+            <Headers>
+                <Header name="Authorization">Bearer {private.tensorcost.key}</Header>
+                <Header name="User-Agent">TensorCost-Apigee/1.0.0</Header>
+            </Headers>
+            <Verb>POST</Verb>
+            <Payload contentType="application/json">{tensorcost.admit_body}</Payload>
+        </Set>
+        <IgnoreUnresolvedVariables>false</IgnoreUnresolvedVariables>
+    </Request>
+    <Response>tcAdmit</Response>
+    <Timeout>1000</Timeout>
+    <HTTPTargetConnection>
+        <URL>https://tensorcost.example.com/api/inference-proxy/v1/gateway/admit</URL>
+    </HTTPTargetConnection>
+</ServiceCallout>

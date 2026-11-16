@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // One level up, so the same-call rule and the exact provider hosts can be
+    // compiled in beside this package. The exported repo has the same layout
+    // (packages/contracts/src/same-call.ts, upstream-billing.ts).
+    "rootDir": "..",
+    "outDir": "dist",
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": ["src/**/*", "../contracts/src/same-call.ts", "../contracts/src/upstream-billing.ts"],
+  "exclude": ["src/**/__tests__/**", "src/**/*.test.ts", "src/**/*.spec.ts"]
+}

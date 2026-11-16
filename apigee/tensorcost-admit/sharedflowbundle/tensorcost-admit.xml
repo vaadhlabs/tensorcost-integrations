@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<SharedFlowBundle revision="1" name="tensorcost-admit">
+    <DisplayName>tensorcost-admit</DisplayName>
+    <Description>Asks TensorCost before each model call and follows its decision. Fail mode when TensorCost can't answer: open.</Description>
+    <Policies>
+        <Policy>TC-Key</Policy>
+        <Policy>TC-Correlation</Policy>
+        <Policy>TC-Prepare</Policy>
+        <Policy>TC-TokenQuota</Policy>
+        <Policy>TC-QuotaRefuse</Policy>
+        <Policy>TC-LookupFailMode</Policy>
+        <Policy>TC-LookupAllow</Policy>
+        <Policy>TC-Admit</Policy>
+        <Policy>TC-ReadAnswer</Policy>
+        <Policy>TC-Decide</Policy>
+        <Policy>TC-RememberFailMode</Policy>
+        <Policy>TC-Unavailable-RetryAfter</Policy>
+        <Policy>TC-Unavailable</Policy>
+        <Policy>TC-Refuse-RetryAfter</Policy>
+        <Policy>TC-Refuse</Policy>
+        <Policy>TC-Reroute</Policy>
+        <Policy>TC-RememberAllow</Policy>
+    </Policies>
+    <Resources>
+        <Resource>jsc://tensorcost-common.js</Resource>
+        <Resource>jsc://tensorcost-admit.js</Resource>
+    </Resources>
+    <SharedFlows>
+        <SharedFlow>default</SharedFlow>
+    </SharedFlows>
+</SharedFlowBundle>

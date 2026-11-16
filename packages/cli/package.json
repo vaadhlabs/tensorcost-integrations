@@ -1,0 +1,63 @@
+{
+  "name": "@tensorcost/cli",
+  "version": "0.2.7",
+  "description": "TensorCost CLI — estimate and compare LLM prompt costs, and audit an AI bill on your own machine.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "tensorcost": "./dist/index.js",
+    "tc": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "llm",
+    "cost",
+    "anthropic",
+    "openai",
+    "bedrock",
+    "tensorcost",
+    "cli",
+    "tokens",
+    "pricing"
+  ],
+  "author": "Vaadh Labs / TensorCost <engineering@tensorcost.com>",
+  "homepage": "https://tensorcost.com",
+  "scripts": {
+    "build": "tsc -b && node tools/postbuild.mjs",
+    "dev": "tsc -b --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --coverage",
+    "test:integration": "INTEGRATION=1 vitest run --coverage",
+    "test:all": "pnpm test && pnpm test:integration",
+    "prepublishOnly": "pnpm build && pnpm test:all",
+    "lint": "echo 'no lint configured'"
+  },
+  "devDependencies": {
+    "@tensorcost/bill-audit": "workspace:*",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.2.6",
+    "esbuild": "^0.25.12",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.6"
+  }
+}

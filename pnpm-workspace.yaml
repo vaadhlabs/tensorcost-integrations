@@ -1,0 +1,7 @@
+packages:
+  - packages/cli
+  - packages/bill-audit
+  - packages/otel-genai-cost
+  - spec/counted-once
+  - admit-mock
+  - admit-conformance

@@ -1,0 +1,39 @@
+{
+  "http_interactions": [
+    {
+      "request": {
+        "method": "post",
+        "uri": "https://tensorcost.example.com/v1/gateway/admit/3f0b7c2e-9a51-4d6e-8f43-2a7c1e5b9d10/cancel",
+        "body": {
+          "encoding": "UTF-8",
+          "string": ""
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ],
+          "Authorization": [
+            "<GATEWAY_KEY>"
+          ]
+        }
+      },
+      "response": {
+        "status": {
+          "code": 200,
+          "message": "OK"
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ]
+        },
+        "body": {
+          "encoding": "UTF-8",
+          "string": "{\"decision_id\":\"3f0b7c2e-9a51-4d6e-8f43-2a7c1e5b9d10\",\"cancelled\":true}"
+        }
+      },
+      "recorded_at": "Sat, 14 Nov 2026 09:00:00 GMT"
+    }
+  ],
+  "recorded_with": "VCR 6.2.0"
+}

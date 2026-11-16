@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<LookupCache name="TC-LookupFailMode">
+    <DisplayName>TC-LookupFailMode</DisplayName>
+    <CacheKey>
+        <Prefix>tensorcost</Prefix>
+        <KeyFragment>fail-mode</KeyFragment>
+    </CacheKey>
+    <AssignTo>tensorcost.last_fail_mode</AssignTo>
+</LookupCache>

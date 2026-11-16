@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<RaiseFault name="TC-QuotaRefuse">
+    <DisplayName>TC-QuotaRefuse</DisplayName>
+    <!-- The product's pushed quota is spent: TensorCost's refusal, not Apigee's generic quota fault. -->
+    <FaultResponse>
+        <Set>
+            <Payload contentType="application/json">{tensorcost.quota_error_body}</Payload>
+            <StatusCode>429</StatusCode>
+            <ReasonPhrase>Too Many Requests</ReasonPhrase>
+        </Set>
+    </FaultResponse>
+    <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</RaiseFault>

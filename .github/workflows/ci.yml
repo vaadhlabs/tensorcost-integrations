@@ -1,0 +1,150 @@
+# This workflow belongs to the public repository. GitHub does not read
+# integrations/.github/ inside the monorepo, so it never runs there.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checkout-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ls
+
+  counted-once:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spec/counted-once
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npx vitest run
+
+  # The APIM policy fragments, read with the standard library.
+  azure-apim:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: azure-apim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m unittest discover -s tests -v
+
+  # The Apigee shared flows: their XML, and both flows run step by step in
+  # a stand-in proxy. Standard-library Node only.
+  apigee:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apigee
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test
+
+  # The LiteLLM plugin's tests, against the real LiteLLM base classes.
+  # LITELLM_VERSION pins both this job and the proxy image below; move them
+  # together.
+  litellm:
+    runs-on: ubuntu-latest
+    env:
+      LITELLM_VERSION: "1.109.1"
+    defaults:
+      run:
+        working-directory: litellm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "litellm[proxy]==${LITELLM_VERSION}" -e ".[test]"
+      - run: pytest
+
+  # budget_sync against a running LiteLLM proxy: creates a team, pushes a
+  # max_budget, and fails if the push isn't "pushed". This is where the
+  # /team/info and /team/update field names are checked against the pinned
+  # release.
+  litellm-team-api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: litellm
+          POSTGRES_DB: litellm
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e litellm
+      - name: Start LiteLLM
+        run: |
+          docker run -d --name litellm --network host \
+            -e DATABASE_URL=postgresql://postgres:litellm@localhost:5432/litellm \
+            -e LITELLM_MASTER_KEY=sk-ci-master \
+            ghcr.io/berriai/litellm:main-v1.109.1 --port 4000
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:4000/health/liveliness && break
+            sleep 2
+          done
+      - name: Push a team budget
+        env:
+          LITELLM_URL: http://localhost:4000
+          LITELLM_ADMIN_KEY: sk-ci-master
+        run: |
+          curl -sf -X POST http://localhost:4000/team/new \
+            -H "Authorization: Bearer $LITELLM_ADMIN_KEY" -H "content-type: application/json" \
+            -d '{"team_id": "ci-team", "team_alias": "ci-team"}'
+          python -m tensorcost_litellm.budget_sync --team-id ci-team --room-usd 12.34
+      - if: failure()
+        run: docker logs litellm | tail -100
+
+  # The snippet a customer pastes, loaded by the pinned LiteLLM image: the
+  # guardrail and logger from this checkout (on PYTHONPATH), ci/tensorcost.yaml
+  # (the console's exact lines) after a mock model, and a stub TensorCost.
+  # One allowed call, one refused call, and the allowed call's spend row.
+  litellm-proxy-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install httpx
+      - name: Start the stub TensorCost
+        run: python litellm/ci/stub_tensorcost.py 8787 &
+      - name: Start LiteLLM with the snippet's config
+        run: |
+          cat litellm/ci/model_list.yaml litellm/ci/tensorcost.yaml > "$RUNNER_TEMP/config.yaml"
+          docker run -d --name litellm --network host \
+            -v "$PWD/litellm:/plugin:ro" -v "$RUNNER_TEMP/config.yaml:/app/config.yaml:ro" \
+            -e PYTHONPATH=/plugin \
+            -e TENSORCOST_URL=http://localhost:8787 -e TENSORCOST_GATEWAY_KEY=tcgw_ci_key \
+            -e LITELLM_MASTER_KEY=sk-ci-master \
+            ghcr.io/berriai/litellm:main-v1.109.1 --config /app/config.yaml --port 4000
+      - run: python litellm/ci/e2e.py http://localhost:4000 http://localhost:8787
+      - if: failure()
+        run: docker logs litellm | tail -200
+
+  # One job per integration goes here as each is exported:
+  #   CLI tests
+  #   OpenTelemetry package

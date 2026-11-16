@@ -1,0 +1,39 @@
+{
+  "http_interactions": [
+    {
+      "request": {
+        "method": "post",
+        "uri": "https://tensorcost.example.com/v1/gateway/logs?format=tensorcost",
+        "body": {
+          "encoding": "UTF-8",
+          "string": "{\"logs\":[{\"log_id\":\"wk:3f0b7c2e-9a51-4d6e-8f43-2a7c1e5b9d10\",\"provider\":\"anthropic\",\"model\":\"claude-sonnet-4-5\",\"input_tokens\":1800,\"output_tokens\":412,\"cached_input_tokens\":600,\"provider_response_id\":\"msg_01Abc\",\"correlation_id\":\"3f0b7c2e-9a51-4d6e-8f43-2a7c1e5b9d10\",\"started_at\":\"2026-11-14T09:30:00Z\",\"ended_at\":\"2026-11-14T09:30:04Z\",\"callers\":[{\"kind\":\"team\",\"id\":\"search\"},{\"kind\":\"tag\",\"id\":\"team=search\"},{\"kind\":\"user\",\"id\":\"ana@acme.com\"},{\"kind\":\"key\",\"id\":\"recipes-prod\"},{\"kind\":\"tag\",\"id\":\"cost-center=search\"}],\"status\":\"success\"}]}"
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ],
+          "Authorization": [
+            "<GATEWAY_KEY>"
+          ]
+        }
+      },
+      "response": {
+        "status": {
+          "code": 200,
+          "message": "OK"
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ]
+        },
+        "body": {
+          "encoding": "UTF-8",
+          "string": "{\"received\":1,\"inserted\":1,\"deduped\":0,\"skipped\":0,\"parse_errors\":[]}"
+        }
+      },
+      "recorded_at": "Sat, 14 Nov 2026 09:00:00 GMT"
+    }
+  ],
+  "recorded_with": "VCR 6.2.0"
+}

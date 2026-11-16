@@ -1,0 +1,175 @@
+<!--
+  TensorCost admit, an Azure API Management policy fragment (id tensorcost-admit).
+  Include it in the inbound section of each LLM API, right after <base />
+  and before your own policies that can refuse a call:
+    <include-fragment fragment-id="tensorcost-admit" />
+  and tensorcost-on-error in on-error. It needs the named value
+  tensorcost-gateway-key (secret) holding the gateway connection's key.
+  Fail mode when TensorCost can't answer: open.
+  Apache-2.0. See README.md.
+-->
+<fragment>
+	<!-- The call's correlation id is APIM's own request id; a caller's header is overwritten. -->
+	<set-header name="x-tensorcost-correlation-id" exists-action="override">
+		<value>@(context.RequestId.ToString())</value>
+	</set-header>
+	<!-- What the check needs from the body: model, max_tokens, stream. The prompt is never sent. -->
+	<set-variable name="tcBody" value='@{ try { return context.Request.Body?.As&lt;JObject&gt;(preserveContent: true) ?? new JObject(); } catch { return new JObject(); } }' />
+	<!-- A deployment in the path decides the model and can't be rewritten, so such a call is never rerouted; Azure ignores the body's model. -->
+	<set-variable name="tcModelInPath" value='@(!string.IsNullOrEmpty(context.Request.MatchedParameters.GetValueOrDefault("deployment-id", "")))' />
+	<set-variable name="tcModel" value='@{ var b = ((JObject)context.Variables["tcBody"]); var d = context.Request.MatchedParameters.GetValueOrDefault("deployment-id", ""); var m = ""; if (!string.IsNullOrEmpty(d)) { m = d; } else { m = (string)(b["model"] as JValue); } return m ?? ""; }' />
+	<set-variable name="tcMaxTokens" value='@{ var b = ((JObject)context.Variables["tcBody"]); var t = (b["max_completion_tokens"] ?? b["max_tokens"]) as JValue; return t == null ? "" : (string)t; }' />
+	<!-- The end customer the call is for, as the SDK sends it: judged against that customer's limits. -->
+	<set-variable name="tcCustomer" value='@(context.Request.Headers.GetValueOrDefault("x-tc-customer", "").Trim())' />
+	<set-variable name="tcCacheKey" value='@("tensorcost:allow:" + (context.Subscription?.Id ?? "") + "|" + (context.User?.Id ?? "") + "|" + (context.Product?.Id ?? "") + "|" + ((string)context.Variables["tcModel"]) + "|" + ((string)context.Variables["tcMaxTokens"]) + "|" + ((string)context.Variables["tcCustomer"]))' />
+	<cache-lookup-value key="tensorcost:fail-mode" variable-name="tcLastFailMode" default-value="open" />
+	<cache-lookup-value key='@(((string)context.Variables["tcCacheKey"]))' variable-name="tcCachedAllow" />
+	<choose>
+		<when condition='@(!context.Variables.ContainsKey("tcCachedAllow"))'>
+			<send-request mode="new" response-variable-name="tcAdmit" timeout="1" ignore-error="true">
+				<set-url>https://tensorcost.example.com/api/inference-proxy/v1/gateway/admit</set-url>
+				<set-method>POST</set-method>
+				<set-header name="Authorization" exists-action="override">
+					<value>Bearer {{tensorcost-gateway-key}}</value>
+				</set-header>
+				<set-header name="Content-Type" exists-action="override">
+					<value>application/json</value>
+				</set-header>
+				<set-header name="User-Agent" exists-action="override">
+					<value>TensorCost-APIM/1.0.0</value>
+				</set-header>
+				<set-body>@{
+    var callers = new JArray();
+    if (context.Subscription != null) { callers.Add(new JObject(new JProperty("kind", "subscription"), new JProperty("id", context.Subscription.Id))); }
+    if (context.User != null &amp;&amp; !string.IsNullOrEmpty(context.User.Id)) { callers.Add(new JObject(new JProperty("kind", "user"), new JProperty("id", context.User.Id))); }
+    if (context.Product != null) { callers.Add(new JObject(new JProperty("kind", "product"), new JProperty("id", context.Product.Id))); }
+    var req = new JObject(
+        new JProperty("gateway", new JObject(new JProperty("kind", "azure_apim"))),
+        new JProperty("callers", callers),
+        new JProperty("provider", "azure.ai.openai"),
+        new JProperty("model", ((string)context.Variables["tcModel"])),
+        new JProperty("correlation_id", context.RequestId.ToString()));
+    var maxTokens = ((string)context.Variables["tcMaxTokens"]);
+    if (maxTokens != "") { req["max_tokens"] = maxTokens; }
+    var stream = ((JObject)context.Variables["tcBody"])["stream"] as JValue;
+    if (stream != null) { req["stream"] = stream; }
+    if (((bool)context.Variables["tcModelInPath"])) { req["can_reroute"] = false; }
+    var customer = ((string)context.Variables["tcCustomer"]);
+    if (customer != "") { req["customer"] = customer; }
+    return req.ToString(Newtonsoft.Json.Formatting.None);
+}</set-body>
+			</send-request>
+			<!-- An answer is a 200 with a JSON body. Anything else is no answer, and the fail mode decides. -->
+			<set-variable name="tcAnswer" value='@{ var r = (IResponse)context.Variables.GetValueOrDefault("tcAdmit"); if (r == null || r.StatusCode != 200) { return new JObject(); } try { return r.Body.As&lt;JObject&gt;() ?? new JObject(); } catch { return new JObject(); } }' />
+			<set-variable name="tcSeenFailMode" value='@{ var r = (IResponse)context.Variables.GetValueOrDefault("tcAdmit"); if (r == null || r.StatusCode != 200) { return ""; } var m = r.Headers.GetValueOrDefault("x-tc-fail-mode", ""); return m == "open" || m == "closed" ? m : ""; }' />
+			<choose>
+				<when condition='@(((string)context.Variables["tcSeenFailMode"]) != "" &amp;&amp; ((string)context.Variables["tcSeenFailMode"]) != ((string)context.Variables["tcLastFailMode"]))'>
+					<cache-store-value key="tensorcost:fail-mode" value='@(((string)context.Variables["tcSeenFailMode"]))' duration="86400" />
+					<set-variable name="tcLastFailMode" value='@(((string)context.Variables["tcSeenFailMode"]))' />
+				</when>
+			</choose>
+			<set-variable name="tcDecision" value='@((string)(((JObject)context.Variables["tcAnswer"])["decision"] as JValue) ?? "")' />
+			<choose>
+				<!-- No answer: the fail mode TensorCost last sent, else the one this fragment was rendered with. -->
+				<when condition='@(((string)context.Variables["tcDecision"]) == "" &amp;&amp; ((string)context.Variables["tcLastFailMode"]) == "closed")'>
+					<return-response>
+						<set-status code="503" reason="Service Unavailable" />
+						<set-header name="Content-Type" exists-action="override">
+							<value>application/json</value>
+						</set-header>
+						<set-body>@{
+    var a = (JObject)context.Variables["tcAnswer"];
+    var e = new JObject(new JProperty("type", "budget_check_unavailable"), new JProperty("message", "TensorCost couldn't check this call's budget, and this gateway refuses calls it can't check."));
+    return new JObject(new JProperty("error", e)).ToString(Newtonsoft.Json.Formatting.None);
+}</set-body>
+					</return-response>
+				</when>
+				<when condition='@(((string)context.Variables["tcDecision"]) == "refuse" &amp;&amp; ((string)(((JObject)context.Variables["tcAnswer"])["reason"] as JValue) == "check_unavailable" || (string)(((JObject)context.Variables["tcAnswer"])["reason"] as JValue) == "invalid_request") &amp;&amp; (string)(((JObject)context.Variables["tcAnswer"])["retry_after_seconds"] as JValue) != null)'>
+					<return-response>
+						<set-status code="503" reason="Service Unavailable" />
+						<set-header name="Retry-After" exists-action="override">
+							<value>@((string)(((JObject)context.Variables["tcAnswer"])["retry_after_seconds"] as JValue))</value>
+						</set-header>
+						<set-header name="Content-Type" exists-action="override">
+							<value>application/json</value>
+						</set-header>
+						<set-body>@{
+    var a = (JObject)context.Variables["tcAnswer"];
+    var e = new JObject(new JProperty("type", "budget_check_unavailable"), new JProperty("message", (string)(((JObject)context.Variables["tcAnswer"])["message"] as JValue) ?? "TensorCost couldn't check this call's budget, and this gateway refuses calls it can't check."));
+    e["reason"] = (string)(((JObject)context.Variables["tcAnswer"])["reason"] as JValue);
+    e["retry_after_seconds"] = a["retry_after_seconds"];
+    return new JObject(new JProperty("error", e)).ToString(Newtonsoft.Json.Formatting.None);
+}</set-body>
+					</return-response>
+				</when>
+				<when condition='@(((string)context.Variables["tcDecision"]) == "refuse" &amp;&amp; ((string)(((JObject)context.Variables["tcAnswer"])["reason"] as JValue) == "check_unavailable" || (string)(((JObject)context.Variables["tcAnswer"])["reason"] as JValue) == "invalid_request"))'>
+					<return-response>
+						<set-status code="503" reason="Service Unavailable" />
+						<set-header name="Content-Type" exists-action="override">
+							<value>application/json</value>
+						</set-header>
+						<set-body>@{
+    var a = (JObject)context.Variables["tcAnswer"];
+    var e = new JObject(new JProperty("type", "budget_check_unavailable"), new JProperty("message", (string)(((JObject)context.Variables["tcAnswer"])["message"] as JValue) ?? "TensorCost couldn't check this call's budget, and this gateway refuses calls it can't check."));
+    e["reason"] = (string)(((JObject)context.Variables["tcAnswer"])["reason"] as JValue);
+    return new JObject(new JProperty("error", e)).ToString(Newtonsoft.Json.Formatting.None);
+}</set-body>
+					</return-response>
+				</when>
+				<when condition='@(((string)context.Variables["tcDecision"]) == "refuse" &amp;&amp; (string)(((JObject)context.Variables["tcAnswer"])["retry_after_seconds"] as JValue) != null)'>
+					<return-response>
+						<set-status code="429" reason="Too Many Requests" />
+						<set-header name="Retry-After" exists-action="override">
+							<value>@((string)(((JObject)context.Variables["tcAnswer"])["retry_after_seconds"] as JValue))</value>
+						</set-header>
+						<set-header name="Content-Type" exists-action="override">
+							<value>application/json</value>
+						</set-header>
+						<set-body>@{
+    var a = (JObject)context.Variables["tcAnswer"];
+    var e = new JObject(new JProperty("type", "budget_exceeded"), new JProperty("message", (string)(((JObject)context.Variables["tcAnswer"])["message"] as JValue) ?? "TensorCost refused this call."));
+    if (a["reason"] != null) { e["reason"] = a["reason"]; }
+    if (a["decision_id"] != null) { e["decision_id"] = a["decision_id"]; }
+    if (a["retry_after_seconds"] != null) { e["retry_after_seconds"] = a["retry_after_seconds"]; }
+    return new JObject(new JProperty("error", e)).ToString(Newtonsoft.Json.Formatting.None);
+}</set-body>
+					</return-response>
+				</when>
+				<when condition='@(((string)context.Variables["tcDecision"]) == "refuse")'>
+					<return-response>
+						<set-status code="429" reason="Too Many Requests" />
+						<set-header name="Content-Type" exists-action="override">
+							<value>application/json</value>
+						</set-header>
+						<set-body>@{
+    var a = (JObject)context.Variables["tcAnswer"];
+    var e = new JObject(new JProperty("type", "budget_exceeded"), new JProperty("message", (string)(((JObject)context.Variables["tcAnswer"])["message"] as JValue) ?? "TensorCost refused this call."));
+    if (a["reason"] != null) { e["reason"] = a["reason"]; }
+    if (a["decision_id"] != null) { e["decision_id"] = a["decision_id"]; }
+    if (a["retry_after_seconds"] != null) { e["retry_after_seconds"] = a["retry_after_seconds"]; }
+    return new JObject(new JProperty("error", e)).ToString(Newtonsoft.Json.Formatting.None);
+}</set-body>
+					</return-response>
+				</when>
+				<when condition='@(((string)context.Variables["tcDecision"]) == "reroute")'>
+					<set-variable name="tcDecisionId" value='@((string)(((JObject)context.Variables["tcAnswer"])["decision_id"] as JValue) ?? "")' />
+					<choose>
+						<when condition='@(!((bool)context.Variables["tcModelInPath"]) &amp;&amp; ((JObject)context.Variables["tcBody"])["model"] != null &amp;&amp; !string.IsNullOrEmpty((string)(((JObject)context.Variables["tcAnswer"])["model"] as JValue)))'>
+							<set-body>@{ var b = ((JObject)context.Variables["tcBody"]); b["model"] = (string)(((JObject)context.Variables["tcAnswer"])["model"] as JValue); return b.ToString(Newtonsoft.Json.Formatting.None); }</set-body>
+						</when>
+					</choose>
+				</when>
+				<when condition='@(((string)context.Variables["tcDecision"]) == "allow")'>
+					<set-variable name="tcDecisionId" value='@((string)(((JObject)context.Variables["tcAnswer"])["decision_id"] as JValue) ?? "")' />
+					<!-- Reused only when TensorCost says so: cache_ttl_seconds above 0, nothing reserved, a full check. -->
+					<set-variable name="tcCacheTtl" value='@{ var a = (JObject)context.Variables["tcAnswer"]; var ttl = a["cache_ttl_seconds"] as JValue; var held = a["reservation_cents"] as JValue; if (ttl == null || held == null || a["degraded"] != null || a["fail_mode_known"] != null) { return 0; } var t = (int)ttl; return t &gt; 0 &amp;&amp; (double)held == 0 ? t : 0; }' />
+					<choose>
+						<when condition='@(((int)context.Variables["tcCacheTtl"]) &gt; 0)'>
+							<cache-store-value key='@(((string)context.Variables["tcCacheKey"]))' value="allow" duration='@(((int)context.Variables["tcCacheTtl"]))' />
+						</when>
+					</choose>
+				</when>
+			</choose>
+		</when>
+	</choose>
+</fragment>

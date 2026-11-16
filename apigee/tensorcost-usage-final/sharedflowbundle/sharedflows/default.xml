@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<!--
+  tensorcost-usage-final: include it with a FlowCallout in each LLM proxy's PostClientFlow.
+  It sends the row TC-StreamUsage built from a streamed response's events.
+-->
+<SharedFlow name="default">
+    <Step>
+        <Name>TC-StreamLog</Name>
+        <Condition>tensorcost.stream_row = "true"</Condition>
+    </Step>
+</SharedFlow>

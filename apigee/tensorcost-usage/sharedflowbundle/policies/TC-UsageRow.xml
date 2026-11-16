@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<Javascript name="TC-UsageRow" timeLimit="200">
+    <DisplayName>TC-UsageRow</DisplayName>
+    <Properties>
+        <Property name="step">row</Property>
+        <Property name="failMode">open</Property>
+        <Property name="verifyApiKeyPolicy">VerifyAPIKey</Property>
+    </Properties>
+    <IncludeURL>jsc://tensorcost-common.js</IncludeURL>
+    <ResourceURL>jsc://tensorcost-usage.js</ResourceURL>
+</Javascript>

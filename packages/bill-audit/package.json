@@ -1,0 +1,25 @@
+{
+  "name": "@tensorcost/bill-audit",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/bill-audit/src/index.js",
+  "types": "./dist/bill-audit/src/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/bill-audit/src/index.d.ts", "import": "./dist/bill-audit/src/index.js" }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --coverage",
+    "lint": "echo 'no lint configured'"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.2.6",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.6"
+  }
+}

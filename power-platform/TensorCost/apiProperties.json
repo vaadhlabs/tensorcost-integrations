@@ -1,0 +1,55 @@
+{
+  "properties": {
+    "connectionParameters": {
+      "api_key": {
+        "type": "securestring",
+        "uiDefinition": {
+          "displayName": "Gateway key",
+          "description": "Type Bearer, a space, then the tcgw_ key of a Power Platform gateway connection: Bearer tcgw_...",
+          "tooltip": "In TensorCost, open Connect > Gateways, create a connection of kind Power Platform and copy its key. It is shown once. An SDK token doesn't work here.",
+          "constraints": {
+            "tabIndex": 2,
+            "clearText": false,
+            "required": "true"
+          }
+        }
+      },
+      "api_host": {
+        "type": "string",
+        "defaultValue": "api.tensorcost.com",
+        "uiDefinition": {
+          "displayName": "TensorCost API host",
+          "description": "Your TensorCost API host, without https://. api.tensorcost.com unless TensorCost gave you another.",
+          "constraints": {
+            "tabIndex": 1,
+            "clearText": true,
+            "required": "true"
+          }
+        }
+      }
+    },
+    "iconBrandColor": "#1F2937",
+    "capabilities": ["actions", "triggers"],
+    "publisher": "TensorCost",
+    "stackOwner": "TensorCost",
+    "policyTemplateInstances": [
+      {
+        "templateId": "dynamichosturl",
+        "title": "TensorCost API host",
+        "parameters": {
+          "x-ms-apimTemplateParameter.urlTemplate": "https://@connectionParameters('api_host')"
+        }
+      },
+      {
+        "templateId": "setheader",
+        "title": "TensorCost User-Agent",
+        "parameters": {
+          "x-ms-apimTemplateParameter.name": "User-Agent",
+          "x-ms-apimTemplateParameter.value": "TensorCost-PowerPlatform/1.0.0",
+          "x-ms-apimTemplateParameter.existsAction": "override",
+          "x-ms-apimTemplate-policySection": "Request"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "http_interactions": [
+    {
+      "request": {
+        "method": "post",
+        "uri": "https://tensorcost.example.com/v1/gateway/headroom",
+        "body": {
+          "encoding": "UTF-8",
+          "string": "{}"
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ],
+          "Authorization": [
+            "<GATEWAY_KEY>"
+          ]
+        }
+      },
+      "response": {
+        "status": {
+          "code": 200,
+          "message": "OK"
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ]
+        },
+        "body": {
+          "encoding": "UTF-8",
+          "string": "{\"allowed\":true,\"binding\":null,\"budgets\":[],\"counted_spend_mtd_cents\":0,\"counted_spend_scope\":\"workspace\",\"estimate_cents\":0,\"attribution\":{\"team\":null,\"developer\":null,\"unmapped\":[]}}"
+        }
+      },
+      "recorded_at": "Sat, 14 Nov 2026 09:00:00 GMT"
+    }
+  ],
+  "recorded_with": "VCR 6.2.0"
+}

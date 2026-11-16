@@ -1,0 +1,39 @@
+{
+  "http_interactions": [
+    {
+      "request": {
+        "method": "post",
+        "uri": "https://tensorcost.example.com/v1/gateway/admit",
+        "body": {
+          "encoding": "UTF-8",
+          "string": "{\"model\":\"claude-sonnet-4-5\",\"provider\":\"anthropic\",\"max_tokens\":4096,\"input_tokens\":1800,\"callers\":[{\"kind\":\"team\",\"id\":\"search\"},{\"kind\":\"tag\",\"id\":\"team=search\"},{\"kind\":\"user\",\"id\":\"ana@acme.com\"},{\"kind\":\"key\",\"id\":\"recipes-prod\"},{\"kind\":\"tag\",\"id\":\"cost-center=search\"}],\"workflow_id\":\"recipe-4417\",\"agent_id\":\"triage\",\"can_reroute\":false}"
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ],
+          "Authorization": [
+            "<GATEWAY_KEY>"
+          ]
+        }
+      },
+      "response": {
+        "status": {
+          "code": 200,
+          "message": "OK"
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ]
+        },
+        "body": {
+          "encoding": "UTF-8",
+          "string": "{\"decision\":\"refuse\",\"decision_id\":\"7d2a4e19-0c3b-4f8a-9e61-5b0d8c2f7a34\",\"reason\":\"budget_hard_cap\",\"message\":\"TensorCost: Search team has reached its monthly AI budget ($20,000). Ask ana@acme.com to raise it.\",\"budget\":{\"id\":\"2f5c8e1a-6b4d-4a9e-b3f7-0c1d2e3f4a5b\",\"name\":\"Search team\",\"period\":\"month\",\"cap_cents\":2000000,\"spent_cents\":2000412},\"retry_after_seconds\":3600,\"reservation_cents\":6.684,\"reservation_basis\":\"max_tokens\",\"attribution\":{\"team\":\"search\",\"developer\":\"ana@acme.com\",\"unmapped\":[]},\"fail_mode\":\"open\",\"cache_ttl_seconds\":0}"
+        }
+      },
+      "recorded_at": "Sat, 14 Nov 2026 09:00:00 GMT"
+    }
+  ],
+  "recorded_with": "VCR 6.2.0"
+}

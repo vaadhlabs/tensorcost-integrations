@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<!--
+  tensorcost-usage: include it with a FlowCallout first in each LLM proxy's TargetEndpoint response PreFlow,
+  and again in the ProxyEndpoint's DefaultFaultRule with <AlwaysEnforce>true</AlwaysEnforce>. It runs once a call.
+  A streamed response's row is sent later, by tensorcost-usage-final in the PostClientFlow.
+-->
+<SharedFlow name="default">
+    <Step>
+        <Name>TC-UsageKey</Name>
+    </Step>
+    <Step>
+        <Name>TC-UsageRead</Name>
+    </Step>
+    <Step>
+        <Name>TC-TokenCount</Name>
+        <Condition>(tensorcost.count_tokens = "true") and (tensorcost.quota_on = "true")</Condition>
+    </Step>
+    <Step>
+        <Name>TC-UsageRow</Name>
+        <Condition>(tensorcost.send_row = "true") or (tensorcost.stream_pending = "true")</Condition>
+    </Step>
+    <Step>
+        <Name>TC-UsageLog</Name>
+        <Condition>tensorcost.send_row = "true"</Condition>
+    </Step>
+    <Step>
+        <Name>TC-Cancel</Name>
+        <Condition>tensorcost.send_cancel = "true"</Condition>
+    </Step>
+</SharedFlow>
