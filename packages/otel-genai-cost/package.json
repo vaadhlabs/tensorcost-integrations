@@ -1,0 +1,48 @@
+{
+  "name": "@tensorcost/otel-genai-cost",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "description": "Reads OpenTelemetry GenAI spans (Kong, LiteLLM, plain OTel) into one call shape with provider, cache tokens and caller identity.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vaadhlabs/tensorcost-integrations.git",
+    "directory": "packages/otel-genai-cost"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "opentelemetry",
+    "genai",
+    "llm",
+    "cost",
+    "tokens"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "echo 'no lint configured'"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.6"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "README.md",
+    "LICENSE"
+  ]
+}

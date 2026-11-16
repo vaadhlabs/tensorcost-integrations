@@ -1,0 +1,12 @@
+guardrails:
+  - guardrail_name: tensorcost
+    litellm_params:
+      guardrail: tensorcost_litellm.TensorCostAdmit
+      mode: pre_call
+      default_on: true
+      api_base: os.environ/TENSORCOST_URL
+      api_key: os.environ/TENSORCOST_GATEWAY_KEY
+      fail_mode: open
+
+litellm_settings:
+  callbacks: ["tensorcost_litellm.spend_logger"]

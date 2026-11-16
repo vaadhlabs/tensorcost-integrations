@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<TargetEndpoint name="default">
+    <PreFlow name="PreFlow">
+        <Request/>
+        <Response>
+            <!-- First in the target's response, before any of its own policies: it reads the status as the target sent it. -->
+            <Step>
+                <Name>FC-TensorCostUsage</Name>
+            </Step>
+        </Response>
+    </PreFlow>
+    <!-- Each event of a text/event-stream response: its usage, and the tokens it adds to the product quota. -->
+    <EventFlow name="EventFlow" content-type="text/event-stream">
+        <Response>
+            <Step>
+                <Name>TC-StreamUsage</Name>
+            </Step>
+            <Step>
+                <Name>TC-StreamTokenCount</Name>
+                <Condition>(tensorcost.quota_on = "true") and (tensorcost.stream_delta_tokens != "0")</Condition>
+            </Step>
+        </Response>
+    </EventFlow>
+    <HTTPTargetConnection>
+        <URL>https://us-central1-aiplatform.googleapis.com</URL>
+    </HTTPTargetConnection>
+</TargetEndpoint>

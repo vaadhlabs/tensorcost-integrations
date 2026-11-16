@@ -1,0 +1,72 @@
+{
+  "http_interactions": [
+    {
+      "request": {
+        "method": "post",
+        "uri": "https://tensorcost.example.com/v1/gateway/subscriptions",
+        "body": {
+          "encoding": "UTF-8",
+          "string": "{\"url\":\"https://webhooks.workato.com/webhooks/rest/abc/tensorcost\",\"event_types\":[\"budget.threshold_crossed\"]}"
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ],
+          "Authorization": [
+            "<GATEWAY_KEY>"
+          ]
+        }
+      },
+      "response": {
+        "status": {
+          "code": 201,
+          "message": "Created"
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json; charset=utf-8"
+          ],
+          "Location": [
+            "/v1/gateway/subscriptions/9b1e5c7a-2d4f-4a6b-8c0e-1f3a5b7c9d2e"
+          ]
+        },
+        "body": {
+          "encoding": "UTF-8",
+          "string": "{\"id\":\"9b1e5c7a-2d4f-4a6b-8c0e-1f3a5b7c9d2e\",\"url\":\"https://webhooks.workato.com/webhooks/rest/abc/tensorcost\",\"event_types\":[\"budget.threshold_crossed\"],\"signing_secret\":\"whsec_example\"}"
+        }
+      },
+      "recorded_at": "Sat, 14 Nov 2026 09:00:00 GMT"
+    },
+    {
+      "request": {
+        "method": "delete",
+        "uri": "https://tensorcost.example.com/v1/gateway/subscriptions/9b1e5c7a-2d4f-4a6b-8c0e-1f3a5b7c9d2e",
+        "body": {
+          "encoding": "UTF-8",
+          "string": ""
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ],
+          "Authorization": [
+            "<GATEWAY_KEY>"
+          ]
+        }
+      },
+      "response": {
+        "status": {
+          "code": 204,
+          "message": "No Content"
+        },
+        "headers": {},
+        "body": {
+          "encoding": "UTF-8",
+          "string": ""
+        }
+      },
+      "recorded_at": "Sat, 14 Nov 2026 09:00:00 GMT"
+    }
+  ],
+  "recorded_with": "VCR 6.2.0"
+}

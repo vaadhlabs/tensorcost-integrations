@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<ServiceCallout name="TC-StreamLog" continueOnError="true" enabled="true">
+    <DisplayName>TC-StreamLog</DisplayName>
+    <!-- A streamed call's row, after the stream, fire and forget. No <Response>: the proxy doesn't wait, and a lost push isn't seen here. -->
+    <Request variable="tcStreamRequest" clearPayload="true">
+        <Set>
+            <Headers>
+                <Header name="Authorization">Bearer {private.tensorcost.key}</Header>
+                <Header name="User-Agent">TensorCost-Apigee/1.0.0</Header>
+            </Headers>
+            <Verb>POST</Verb>
+            <Payload contentType="application/json">{tensorcost.log_rows}</Payload>
+        </Set>
+        <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+    </Request>
+    <Timeout>1000</Timeout>
+    <HTTPTargetConnection>
+        <URL>https://tensorcost.example.com/api/inference-proxy/v1/gateway/logs?format=tensorcost</URL>
+    </HTTPTargetConnection>
+</ServiceCallout>

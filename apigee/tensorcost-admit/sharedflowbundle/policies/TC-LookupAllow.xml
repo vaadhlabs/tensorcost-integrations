@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<LookupCache name="TC-LookupAllow">
+    <DisplayName>TC-LookupAllow</DisplayName>
+    <CacheKey>
+        <Prefix>tensorcost</Prefix>
+        <KeyFragment ref="tensorcost.cache_key"/>
+    </CacheKey>
+    <AssignTo>tensorcost.cached_allow</AssignTo>
+</LookupCache>

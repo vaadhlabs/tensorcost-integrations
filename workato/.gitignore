@@ -1,0 +1,5 @@
+master.key
+settings.yaml.enc
+settings.yaml
+Gemfile.lock
+.bundle/

@@ -1,0 +1,716 @@
+openapi: 3.1.0
+info:
+  title: TensorCost — Gateway admit
+  version: 1.0.0
+  description: >-
+    A gateway (LiteLLM, Azure APIM, Apigee, Kong, or any proxy that can make
+    an HTTP call before a model call) asks TensorCost whether the call may go
+    ahead. Every decision is answered with HTTP 200 and a JSON body whose
+    `decision` is allow, refuse or reroute. A gateway branches on `decision`,
+    never on the status: a non-2xx status means TensorCost itself failed
+    (bad key, a body that isn't a JSON object, throttled, unreachable), and
+    the gateway's own fail-mode setting applies. A field TensorCost can't
+    use (a caller with no id, a list past its cap, an optional field of the
+    wrong type) is dropped, named in `detail` after "ignored:", and the call
+    is still checked. Only a model TensorCost can't read skips the check,
+    as a 200 decided by the workspace's fail mode: closed refuses with
+    reason `invalid_request`, open allows with `degraded: true`. A refusal is a 200 because a gateway set to
+    continue on error (Apigee continueOnError="true", APIM ignore-error) can't
+    tell a 403 from an outage and would let the call through.
+
+    TensorCost gives its own check 800 ms. Generated snippets set a 1,000 ms
+    timeout on the call. If TensorCost can't finish its check in time, the
+    workspace's fail mode decides every gate (budgets, holds, the run stop,
+    model governance): open answers allow with `degraded: true`,
+    closed answers refuse with reason `check_unavailable`, both as 200, with
+    `detail` saying what couldn't be checked. If the workspace's fail mode
+    itself can't be read in time, the default (open) decides, the answer
+    carries `fail_mode_known: false` and `degraded: true`, and the
+    x-tc-fail-mode header is left off.
+
+    What admit checks. Compliance, an operator's stop on the run, the
+    workspace's cost budgets (hard caps, margin floors and fixed customer
+    limits, each holding the call's reservation), model governance and
+    interventions. It does not check agent run budgets or the proxy's
+    agent, team and workspace period caps: those count spend the proxy and
+    the SDK see, and a gateway's calls never reach them, so a check would
+    always read the same figure. Govern gateway traffic with cost budgets.
+    `period_budget_exceeded` stays in the reason list for older clients and
+    is not sent on this route.
+
+    This file is the contract's source of truth; the protocol text in
+    README.md is written from it.
+servers:
+  - url: https://{host}/v1
+    description: >-
+      Your TensorCost API host. Every path below is served under /v1, and
+      also under /api/inference-proxy/v1.
+    variables:
+      host:
+        default: tensorcost.example.com
+        description: The TensorCost API host your workspace uses.
+paths:
+  /gateway/admit:
+    post:
+      summary: Ask before a model call
+      description: >-
+        Also served at /api/inference-proxy/v1/gateway/admit. Authenticated
+        by the gateway connection's own key (`Authorization: Bearer tcgw_…`),
+        never an SDK token. Each connection has an admit rate, 60,000 checks a
+        minute unless a TensorCost admin sets another (up to the operator's
+        ceiling). Past it the answer is still a 200, the fail mode's decision
+        with `detail` "throttled": open allows with `degraded: true` and
+        nothing held, closed refuses with reason `check_unavailable` and a
+        `retry_after_seconds` to the next minute. Only a call whose key
+        TensorCost doesn't have cached (a made-up key, or a live key's first
+        call in a minute) is throttled with a 429, per address at 100 a
+        minute: it isn't a decision.
+        An allow places a hold for the call's reservation against the
+        workspace's hard caps until the call's spend is counted, for at most
+        the hold life of the connection's gateway kind: five minutes for a
+        gateway that pushes its spend as calls finish (LiteLLM, Apigee, Kong,
+        Workato, Power Platform, generic), 25 minutes for Azure APIM, whose
+        logs TensorCost pulls every 15 minutes. TensorCost never holds a
+        call longer than 30 minutes.
+      operationId: gatewayAdmit
+      x-mcp:
+        enabled: false
+        reason: "gateway-facing; agents use check_budget_headroom"
+      security:
+        - gatewayKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GatewayAdmitRequest"
+            example:
+              gateway: { kind: litellm, instance: prod-eu }
+              callers:
+                - { kind: team, id: 8f1c }
+                - { kind: user, id: ana@acme.com }
+                - { kind: key, id: sk-alias }
+                - { kind: tag, id: cost-center=search }
+              provider: aws.bedrock
+              model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+              max_tokens: 4096
+              input_tokens: 1800
+              stream: true
+              accepts_models: [claude-haiku-4-5, claude-sonnet-4-5]
+              correlation_id: litellm-call-id
+              environment: production
+              application: support-bot
+              agent_id: triage
+              workflow_id: run-123
+              tags: [feature=summary]
+              customer: acme
+      responses:
+        "200":
+          description: The decision. Always 200 for an answered decision, refusals included.
+          headers:
+            x-tc-decision:
+              description: "As on the SDK route: `layer=govern; action=allow|refuse; reason=…`."
+              schema: { type: string }
+            x-tc-fail-mode:
+              description: >-
+                The workspace's fail mode, so a hook can pick up a change
+                without a redeploy. Absent when it couldn't be read
+                (fail_mode_known false): a hook keeps the mode it has.
+              schema: { type: string, enum: [open, closed] }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GatewayAdmitResponse"
+              examples:
+                allow:
+                  value:
+                    decision: allow
+                    decision_id: 3f0b7c2e-9a51-4d6e-8f43-2a7c1e5b9d10
+                    reason: null
+                    message: null
+                    reservation_cents: 6.684
+                    reservation_basis: max_tokens
+                    reservation_kind: worst_case
+                    attribution: { team: search, developer: ana@acme.com, unmapped: ["litellm_key:prod-eu/sk-alias"] }
+                    fail_mode: open
+                    cache_ttl_seconds: 0
+                refuse:
+                  value:
+                    decision: refuse
+                    decision_id: 7d2a4e19-0c3b-4f8a-9e61-5b0d8c2f7a34
+                    reason: budget_hard_cap
+                    message: "TensorCost: Search team has reached its monthly AI budget ($20,000). Ask ana@acme.com to raise it."
+                    budget: { id: 2f5c8e1a-6b4d-4a9e-b3f7-0c1d2e3f4a5b, name: Search team, period: month, cap_cents: 2000000, spent_cents: 2000412 }
+                    retry_after_seconds: 3600
+                    reservation_cents: 6.684
+                    reservation_basis: max_tokens
+                    attribution: { team: search, developer: ana@acme.com, unmapped: [] }
+                    fail_mode: open
+                    cache_ttl_seconds: 0
+                reroute:
+                  value:
+                    decision: reroute
+                    decision_id: 5a8d2c4e-7f1b-4e3a-9c6d-0b2e4f6a8c1d
+                    model: claude-haiku-4-5
+                    route: { policy_id: 9e7c5a3b-1d2f-4a6e-8b0c-2d4f6a8c0e1b, from_model: claude-sonnet-4-5, to_model: claude-haiku-4-5 }
+                    reason: null
+                    message: null
+                    reservation_cents: 2.228
+                    reservation_basis: max_tokens
+                    reservation_kind: worst_case
+                    attribution: { team: search, developer: ana@acme.com, unmapped: [] }
+                    fail_mode: open
+                    cache_ttl_seconds: 0
+                degraded:
+                  value:
+                    decision: allow
+                    decision_id: 1c9e5a7b-3d2f-4e8a-a6b0-9f4c2d1e7b83
+                    reason: null
+                    message: null
+                    degraded: true
+                    detail: check_timeout
+                    reservation_cents: 96.54
+                    reservation_basis: model_default
+                    reservation_kind: estimated
+                    attribution: { team: null, developer: null, unmapped: [] }
+                    fail_mode: open
+                    cache_ttl_seconds: 0
+        "400":
+          description: The body is not a JSON object, or is empty. TensorCost failed; the gateway's fail mode applies.
+        "401":
+          description: Not a live gateway connection key.
+        "429":
+          description: Over 100 a minute from this address for a key TensorCost doesn't have cached. A known connection past its own admit rate gets a 200 (detail "throttled"), never a 429.
+        "503":
+          description: TensorCost couldn't check the key. TensorCost failed; the gateway's fail mode applies.
+  /gateway/admit/{decision_id}/cancel:
+    post:
+      summary: The gateway didn't run an allowed call
+      description: >-
+        Also served at /api/inference-proxy/v1/gateway/admit/{decision_id}/cancel.
+        Call it only for an allowed call the provider can't have billed:
+        the gateway's own limit refused it, the client went away before it
+        was sent, the connection to the provider failed before the request
+        left (refused, DNS, TLS), or the provider refused it before any
+        model work (401, 403, 404 or 429, at any provider). The call's hold
+        on the workspace's hard caps goes at once, rather than when its hold
+        life runs out. A cancelled hold must not be used for a call that may have
+        been billed: after a timeout, a 5xx, a 400 the provider may have
+        processed (Azure OpenAI bills a content-filtered 400 and a 408), or
+        a stream that broke off, the gateway leaves the hold alone, and the
+        call's spend releases it when its row lands, or it runs out with its
+        hold life. TensorCost never says a call is safe to send again;
+        a resend is a new call and asks admit again. Only the connection
+        whose admit answered the decision can cancel it; any other
+        connection's cancel, a second cancel, a decision that held nothing
+        and one whose hold has expired all answer `cancelled: false`.
+        The LiteLLM, Azure API Management and Apigee plugins call this
+        after a gateway refusal or one of the never-billed failures above.
+        A call that ran is not cancelled: its spend releases the hold.
+      operationId: gatewayAdmitCancel
+      x-mcp:
+        enabled: false
+        reason: "gateway-facing; agents use check_budget_headroom"
+      security:
+        - gatewayKey: []
+      parameters:
+        - name: decision_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: The decision_id the admit answered.
+      responses:
+        "200":
+          description: Done, whether or not there was a hold to cancel.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [decision_id, cancelled]
+                properties:
+                  decision_id: { type: string, format: uuid }
+                  cancelled: { type: boolean, description: True when this call dropped a hold. }
+        "400":
+          description: decision_id is not a uuid.
+        "401":
+          description: Not a live gateway connection key.
+        "429":
+          description: Throttled, as the admit route is.
+        "503":
+          description: TensorCost couldn't reach its holds; retry, or the hold expires on its own with its hold life.
+  /gateway/headroom:
+    post:
+      summary: Ask whether the budgets have room for a step
+      description: >-
+        Also served at /api/inference-proxy/v1/gateway/headroom. For a
+        connector that isn't in a model call's path (a Workato recipe or
+        agent skill, a Power Automate flow, a Copilot Studio agent) to ask
+        before an expensive step. It is the admit check run read only, so
+        the same answer for the same context: the same budgets, matched by
+        the team and developer the callers resolve to (an explicit `team`
+        wins), the application, agent, workflow and tags, the connection's
+        own environment, the same counted spend, and on every hard cap the
+        holds other gateway calls have live. `allowed` says whether
+        `estimate_cents`, as a worst case, would take any hard cap over.
+        Admit sizes its own reservation, so send the same figure to get the
+        same answer. Nothing is held and no decision is recorded, so a call
+        that goes ahead still asks admit (or records its spend) as usual. This is not a decision route: a field it can't read
+        is a 400, and a non-2xx means TensorCost couldn't answer. 600 a
+        minute per connection.
+      operationId: gatewayHeadroom
+      x-mcp:
+        enabled: false
+        reason: "gateway-facing; agents use check_budget_headroom"
+      security:
+        - gatewayKey: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GatewayHeadroomRequest" }
+            example:
+              team: search
+              estimate_cents: 5000
+              callers:
+                - { kind: key, id: recipes-prod }
+      responses:
+        "200":
+          description: The answer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GatewayHeadroomResponse" }
+        "400":
+          description: A field that can't be read, named in the message.
+        "401":
+          description: Not a live gateway connection key.
+        "429":
+          description: Over the connection's 600 a minute, or 100 a minute from this address for a key TensorCost doesn't have cached.
+        "503":
+          description: TensorCost couldn't read the budgets. Try again shortly.
+  /gateway/subscriptions:
+    post:
+      summary: Send budget events to a URL
+      description: >-
+        Also served at /api/inference-proxy/v1/gateway/subscriptions. The
+        connection's subscription: each event of the listed types is POSTed
+        to `url`, signed with `signing_secret`, which is in this answer only.
+        The subscription belongs to the connection whose key created it;
+        only that key can delete it, and revoking the connection deletes it.
+        The answer is a 201 whose Location is the subscription's own path,
+        which a webhook trigger (Power Platform) deletes on unsubscribe.
+        60 a minute per connection.
+      operationId: gatewaySubscribe
+      x-mcp:
+        enabled: false
+        reason: "gateway-facing; agents use check_budget_headroom"
+      security:
+        - gatewayKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GatewaySubscriptionRequest" }
+            example:
+              url: https://hooks.example.com/tensorcost
+              event_types: [budget.threshold_crossed]
+      responses:
+        "201":
+          description: Subscribed.
+          headers:
+            Location:
+              description: "The subscription's URL, https://{host}/v1/gateway/subscriptions/{id} on the host the request came in on (under /api/inference-proxy when the request was). A path when the host isn't known."
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GatewaySubscription" }
+        "400":
+          description: The url isn't one TensorCost will send to (https, a public address), or an event type isn't one it has.
+        "401":
+          description: Not a live gateway connection key.
+        "429":
+          description: Over the connection's 60 a minute.
+        "503":
+          description: TensorCost couldn't save the subscription. Try again shortly.
+  /gateway/subscriptions/{id}:
+    delete:
+      summary: Stop sending budget events
+      description: >-
+        Also served at /api/inference-proxy/v1/gateway/subscriptions/{id}.
+        Deletes one of this connection's own subscriptions. Any other id,
+        including another connection's or another workspace's, answers 404.
+      operationId: gatewayUnsubscribe
+      x-mcp:
+        enabled: false
+        reason: "gateway-facing; agents use check_budget_headroom"
+      security:
+        - gatewayKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: The id the subscribe answered.
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          description: Not a live gateway connection key.
+        "404":
+          description: No subscription with this id for this connection.
+        "429":
+          description: Over the connection's 60 a minute.
+        "503":
+          description: TensorCost couldn't delete the subscription. Try again shortly.
+components:
+  securitySchemes:
+    gatewayKey:
+      type: http
+      scheme: bearer
+      description: The key shown once when the gateway connection was created (tcgw_…).
+  schemas:
+    GatewayHeadroomRequest:
+      type: object
+      description: Everything is optional; an empty body asks about the whole workspace.
+      properties:
+        team: { type: string, maxLength: 256, description: "The TensorCost team (name, slug or id). Wins over the team the callers resolve to." }
+        developer: { type: string, maxLength: 256, description: "The developer's email. Resolved through the workspace's email aliases, and to their team when they are on exactly one." }
+        provider: { type: string, maxLength: 256, description: As on admit. An unknown name skips provider budgets. }
+        model: { type: string, maxLength: 256 }
+        estimate_cents: { type: number, minimum: 0, maximum: 1000000000, description: "What the step is expected to cost. Omit or 0 to ask only whether a hard cap is already at its limit." }
+        application: { type: string, maxLength: 256, description: As on admit. }
+        agent_id: { type: string, maxLength: 256, description: As on admit. }
+        workflow_id: { type: string, maxLength: 256, description: As on admit. }
+        tags:
+          type: array
+          maxItems: 32
+          items: { type: string, description: "key=value" }
+        callers:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/GatewayCaller" }
+    GatewayHeadroomBudget:
+      type: object
+      required: [id, name, period, mode, cap_cents, spent_cents, held_cents, remaining_cents, burn_pct]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        period: { type: [string, "null"], description: "week, month, quarter or year" }
+        mode: { type: string, enum: [hard_cap, soft_cap] }
+        cap_cents: { type: number }
+        spent_cents: { type: [number, "null"], description: Counted spend this period. Null while it hasn't been counted yet. }
+        held_cents: { type: number, description: "Other gateway calls' live holds on a hard cap. 0 on a soft cap." }
+        remaining_cents: { type: [number, "null"], description: "cap - spent - held, never below 0. Null while spend isn't known." }
+        burn_pct: { type: [number, "null"], description: "(spent + held) / cap as a percent, one decimal: 97 is 97%." }
+        reason: { type: string, enum: [spend_not_known_yet], description: "On a hard cap that refuses because its spend hasn't been counted yet (usually seconds after it is created or changed)." }
+    GatewayHeadroomBinding:
+      type: [object, "null"]
+      description: The budget that refuses when allowed is false; otherwise the hard cap with the least room. Null when no hard cap applies. Same fields as GatewayHeadroomBudget.
+      required: [id, name, period, mode, cap_cents, spent_cents, held_cents, remaining_cents, burn_pct]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        period: { type: [string, "null"], description: "week, month, quarter or year" }
+        mode: { type: string, enum: [hard_cap, soft_cap] }
+        cap_cents: { type: number }
+        spent_cents: { type: [number, "null"], description: Counted spend this period. Null while it hasn't been counted yet. }
+        held_cents: { type: number, description: "Other gateway calls' live holds on a hard cap. 0 on a soft cap." }
+        remaining_cents: { type: [number, "null"], description: "cap - spent - held, never below 0. Null while spend isn't known." }
+        burn_pct: { type: [number, "null"], description: "(spent + held) / cap as a percent, one decimal: 97 is 97%." }
+        reason: { type: string, enum: [spend_not_known_yet], description: "On a hard cap that refuses because its spend hasn't been counted yet (usually seconds after it is created or changed)." }
+    GatewayHeadroomResponse:
+      type: object
+      required: [allowed, binding, budgets, counted_spend_mtd_cents, counted_spend_scope, estimate_cents, attribution]
+      properties:
+        allowed: { type: boolean, description: "False when estimate_cents would take a hard cap over, or one is at its limit or not counted yet." }
+        binding: { $ref: "#/components/schemas/GatewayHeadroomBinding" }
+        budgets:
+          type: array
+          description: Every hard and soft cap the check matched, most used first.
+          items: { $ref: "#/components/schemas/GatewayHeadroomBudget" }
+        counted_spend_mtd_cents: { type: [number, "null"], description: "The team's counted spend this UTC month, or the workspace's when there is no team: bills and metered AI calls, each call counted once. Null when it couldn't be read in time." }
+        counted_spend_scope: { type: string, enum: [team, workspace] }
+        counted_spend_mtd_partial: { type: boolean, enum: [true], description: "The month to date leaves out the recent days that couldn't be read in time: a lower bound. Ask again shortly for the whole figure." }
+        estimate_cents: { type: number }
+        holds_unavailable: { type: boolean, enum: [true], description: "The gateway holds couldn't be read in time, so none were counted." }
+        ai_spend_unavailable: { type: boolean, enum: [true], description: The AI half of the month to date couldn't be read; the figure is the bills alone. }
+        attribution:
+          type: object
+          required: [team, developer, unmapped]
+          properties:
+            team: { type: [string, "null"] }
+            developer: { type: [string, "null"] }
+            unmapped:
+              type: array
+              items: { type: string }
+              description: "`{alias kind}:{value}` for every caller id that has no alias yet."
+        ignored:
+          type: array
+          items: { type: string }
+          description: Callers dropped (a kind this connection's gateway doesn't send, no id, past the cap).
+    GatewaySubscriptionRequest:
+      type: object
+      required: [url, event_types]
+      properties:
+        url: { type: string, maxLength: 2048, description: "The https address to POST events to." }
+        event_types:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items: { type: string, enum: [budget.threshold_crossed] }
+    GatewaySubscription:
+      type: object
+      required: [id, url, event_types]
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string }
+        event_types:
+          type: array
+          items: { type: string }
+        signing_secret: { type: string, description: "The key each delivery is signed with. Returned this once; store it." }
+    GatewayCaller:
+      type: object
+      required: [kind, id]
+      properties:
+        kind:
+          type: string
+          description: >-
+            The gateway's own caller kind: team, user, key (LiteLLM);
+            subscription, user, product (APIM); app, developer, product (Apigee);
+            consumer (Kong); tag (any). Mapped to a TensorCost team or
+            developer through the workspace's caller aliases.
+        id: { type: string, maxLength: 256 }
+    GatewayAdmitRequest:
+      type: object
+      required: [model]
+      description: >-
+        Everything but model is optional. Unknown fields are ignored. Numeric
+        strings, "true"/"false" and numeric ids are taken as meant. A caller
+        with no usable kind or id, or a kind the connection's gateway doesn't
+        send, is dropped; a list past its cap keeps its first entries; an
+        optional field of the wrong type is left out. Each is named in the
+        answer's `detail`, and the call is still checked.
+      properties:
+        gateway:
+          type: object
+          description: Informational. TensorCost takes the gateway kind and instance from the connection the key belongs to.
+          properties:
+            kind: { type: string }
+            instance: { type: [string, "null"] }
+        callers:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/GatewayCaller" }
+        provider:
+          type: string
+          description: >-
+            The gateway's own name for the provider: OTel gen_ai.provider.name
+            values (anthropic, openai, aws.bedrock, azure.ai.openai,
+            gcp.vertex_ai, gcp.gemini), LiteLLM's (bedrock, azure, vertex_ai)
+            or TensorCost's. An unknown name skips provider budgets and model
+            governance; every other budget still applies.
+        model: { type: string, maxLength: 256 }
+        max_tokens:
+          type: integer
+          minimum: 0
+          description: >-
+            The call's output allowance, which its reservation is sized from.
+            Missing, unreadable or above the model's maximum output, the
+            reservation uses the model's maximum output instead, or the
+            workspace's default when the model's limit or price isn't known
+            (see reservation_basis).
+        input_tokens:
+          type: integer
+          minimum: 0
+          description: >-
+            The prompt's size. Above 0, with a usable max_tokens, it makes
+            the reservation the call's known worst case (reservation_kind
+            worst_case). Missing or 0 (a template that can't count), the
+            reservation is an estimate.
+        stream: { type: boolean }
+        accepts_models:
+          type: array
+          maxItems: 32
+          items: { type: string }
+          description: Models the gateway may switch the call to on a reroute.
+        can_reroute:
+          type: boolean
+          description: >-
+            False when the gateway can't rewrite this call's model, such as an
+            Azure OpenAI API behind APIM whose model is the deployment in the
+            URL path. Admit then never answers reroute for the call; a live
+            routing policy that matches it is recorded as shadow advice only.
+            Left out, or true, changes nothing.
+        correlation_id: { type: string, description: "The gateway's own call id, used to match the call's spend row." }
+        environment: { type: string, description: Ignored when the connection's key is bound to an environment. }
+        application: { type: string }
+        agent_id: { type: string }
+        workflow_id: { type: string }
+        tags:
+          type: array
+          maxItems: 32
+          items: { type: string, description: "key=value" }
+        customer:
+          type: string
+          maxLength: 128
+          description: >-
+            The end customer the call is for: the same id an SDK call sends as
+            x-tc-customer. Admit judges the call against that customer's margin
+            floors and fixed customer limits (refusing with
+            `customer_limit_reached` or `margin_floor_reached`), and its holds
+            on them are that customer's. Send it on the call's log row too
+            (`customer` in format=tensorcost, `metadata.tensorcost_customer` in
+            format=litellm); a row that names none stores the customer its
+            admit check carried. Left out, no customer's limit applies. A
+            client that caches allows keys the cache by customer as well.
+    GatewayAdmitBudget:
+      type: object
+      required: [id, name, period, cap_cents, spent_cents]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        period: { type: [string, "null"], description: "week, month, quarter or year (day for some agent caps)" }
+        cap_cents: { type: [number, "null"] }
+        spent_cents: { type: [number, "null"], description: Null while the budget's spend hasn't been counted yet. }
+        held_cents: { type: number, description: "Other gateway calls' live holds on the budget, when they are what refuses." }
+    GatewayAdmitResponse:
+      type: object
+      required: [decision, decision_id, reason, message, reservation_cents, attribution, fail_mode, cache_ttl_seconds]
+      properties:
+        decision: { type: string, enum: [allow, refuse, reroute] }
+        decision_id: { type: string, format: uuid }
+        model:
+          type: string
+          description: >-
+            Reroute only. The model to send the call to, spelled as the gateway
+            listed it (accepts_models or the connection's models). A reroute is
+            answered only to LiteLLM, Azure APIM and Apigee connections, only for
+            a routing policy live by the same rules as the proxy's own routing,
+            and only when the budget check is a clean allow: a refusal is never
+            turned into a reroute. The decision covers one attempt. If the call
+            to this model fails, sending it again, to this model or the one
+            asked for, is a new call that asks admit again; a failed attempt
+            may have been billed, and TensorCost doesn't say otherwise.
+        route:
+          type: object
+          description: >-
+            Reroute only. The policy and the models it moved the call between.
+            The saving counts only once a row from the gateway shows to_model
+            ran under this call's correlation_id.
+          properties:
+            policy_id: { type: string }
+            from_model: { type: string }
+            to_model: { type: string }
+        reason:
+          type: [string, "null"]
+          enum:
+            - budget_hard_cap
+            - budget_spend_not_known_yet
+            - period_budget_exceeded
+            - run_stopped
+            - model_governance_denied
+            - compliance_denied
+            - customer_limit_reached
+            - margin_floor_reached
+            - check_unavailable
+            - invalid_request
+            - null
+        detail:
+          type: string
+          description: >-
+            On a refusal, the refusing gate's own reason when it is more
+            specific than `reason`, or when `reason` has no name for it
+            (guardrail_hard_stop). On check_unavailable
+            or a degraded allow, what couldn't be checked, separated by "; "
+            (fail_mode_unknown, rate_unavailable, budget_check_unavailable,
+            holds_unavailable, check_timeout, throttled (the connection is
+            past its admit rate), run_stop: …, model_governance: …). On invalid_request, what is wrong with the
+            model. After any of these, or alone on a plain decision,
+            "ignored: …" names what the route dropped from the request.
+            Absent otherwise.
+        message:
+          type: [string, "null"]
+          description: >-
+            What to show the person whose call was refused. A budget refusal
+            names the budget and who can raise it: the budget's owner's email,
+            or "a TensorCost admin" when it has none.
+        budget: { $ref: "#/components/schemas/GatewayAdmitBudget" }
+        retry_after_seconds: { type: integer }
+        reservation_cents:
+          type: number
+          description: >-
+            What an allow holds against the workspace's hard caps:
+            (input_tokens × input rate + output allowance × output rate) / 1000,
+            or the workspace's flat default. TensorCost holds at most the
+            cap each hold is held against. On a reroute it is priced for the
+            model the gateway is told to run.
+        reservation_basis:
+          type: string
+          enum: [max_tokens, model_default, workspace_default]
+          description: >-
+            What reservation_cents was sized from. max_tokens: the call's own
+            (on an estimate, when it priced above the default).
+            model_default: the model's maximum output, because max_tokens was
+            missing, unreadable or above that limit. workspace_default: the
+            workspace's default_reservation_cents (or TensorCost's 50-cent
+            default when it has none), because the model's limit or price
+            isn't known. Absent only on invalid_request, which reserves
+            nothing.
+        reservation_kind:
+          type: string
+          enum: [worst_case, estimated]
+          description: >-
+            worst_case: max_tokens was usable and input_tokens was sent, so
+            reservation_cents is the call's known worst case; the call is
+            refused if spent + live holds + reservation_cents would pass a
+            cap, and all of it is held. estimated: anything else; the call is
+            never refused for the reservation's size, only when a cap is
+            already full (spent + live holds at the cap), and it holds at
+            most the room left on each cap. Absent only on invalid_request.
+        reservation:
+          type: string
+          enum: [unpriced, rate_unavailable]
+          description: >-
+            unpriced: no price list has the model, so the workspace default is
+            reserved. rate_unavailable: the price couldn't be read in time;
+            the workspace default is reserved and the answer is the fail
+            mode's. Absent when priced. The model is priced under its own id
+            and the same model's other spellings (a Bedrock cross-Region id
+            such as us.anthropic.claude-sonnet-4-5-20250929-v1:0, LiteLLM's
+            bedrock/ prefix).
+        attribution:
+          type: object
+          required: [team, developer, unmapped]
+          properties:
+            team: { type: [string, "null"] }
+            developer: { type: [string, "null"] }
+            unmapped:
+              type: array
+              items: { type: string }
+              description: "`{alias kind}:{value}` for every caller id that has no alias yet."
+        fail_mode:
+          type: string
+          enum: [open, closed]
+          description: The fail mode this answer was decided by. The workspace's own, unless fail_mode_known is false.
+        fail_mode_known:
+          type: boolean
+          enum: [false]
+          description: >-
+            Present, and false, when the workspace's fail mode couldn't be read
+            in time and the default (open) decided. Never adopt fail_mode as
+            the workspace's setting when this is present.
+        degraded:
+          type: boolean
+          enum: [true]
+          description: >-
+            TensorCost couldn't finish its own check (or read the request, or
+            the workspace's fail mode) and the allow is the open fail mode's.
+            `detail` says what was missing.
+        cache_ttl_seconds:
+          type: integer
+          description: >-
+            How long the gateway may reuse this allow for the same caller,
+            model and customer: 5 while every matched budget is under 80% burn and the
+            allow placed no hold (nothing reserved, no hard cap holding it),
+            else 0. An allow that placed a hold is never cacheable: a call
+            that reused it would hold nothing. Refusals, degraded answers and
+            reroutes carry 0 and are never cached.

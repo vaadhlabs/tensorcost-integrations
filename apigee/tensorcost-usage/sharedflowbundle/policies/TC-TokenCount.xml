@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<LLMTokenQuota name="TC-TokenCount" continueOnError="true" enabled="true">
+    <DisplayName>TC-TokenCount</DisplayName>
+    <!-- This call's tokens, counted against the same counter tensorcost-admit enforces. -->
+    <Allow count="2147483647" countRef="verifyapikey.VerifyAPIKey.apiproduct.tensorcost_llm_quota"/>
+    <Interval>1</Interval>
+    <TimeUnit>year</TimeUnit>
+    <!-- The product and the pushed value: each new value starts a new count. -->
+    <Identifier ref="tensorcost.quota_identifier"/>
+    <Distributed>true</Distributed>
+    <SharedName>tensorcost-llm-tokens</SharedName>
+    <CountOnly>true</CountOnly>
+    <LLMTokenUsageSource>{tensorcost.call_total_tokens}</LLMTokenUsageSource>
+    <!-- The model the call asked for, on every counter, so a reroute never splits the count. -->
+    <LLMModelSource>{tensorcost.request_model}</LLMModelSource>
+</LLMTokenQuota>

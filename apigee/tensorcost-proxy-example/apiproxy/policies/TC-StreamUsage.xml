@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<Javascript name="TC-StreamUsage" timeLimit="200" continueOnError="true">
+    <DisplayName>TC-StreamUsage</DisplayName>
+    <Properties>
+        <Property name="verifyApiKeyPolicy">VerifyAPIKey</Property>
+    </Properties>
+    <IncludeURL>jsc://tensorcost-common.js</IncludeURL>
+    <ResourceURL>jsc://tensorcost-stream.js</ResourceURL>
+</Javascript>

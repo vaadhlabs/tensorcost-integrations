@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<FlowCallout name="FC-TensorCostAdmit">
+    <DisplayName>FC-TensorCostAdmit</DisplayName>
+    <SharedFlowBundle>tensorcost-admit</SharedFlowBundle>
+</FlowCallout>

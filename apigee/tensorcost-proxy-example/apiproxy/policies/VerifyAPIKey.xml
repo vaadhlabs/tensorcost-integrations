@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<VerifyAPIKey name="VerifyAPIKey">
+    <DisplayName>VerifyAPIKey</DisplayName>
+    <APIKey ref="request.header.x-apikey"/>
+</VerifyAPIKey>

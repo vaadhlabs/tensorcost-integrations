@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<AssignMessage name="TC-Reroute">
+    <DisplayName>TC-Reroute</DisplayName>
+    <!-- The request body with its model set to the model TensorCost answered. -->
+    <AssignTo createNew="false" transport="http" type="request"/>
+    <Set>
+        <Payload contentType="application/json">{tensorcost.rerouted_body}</Payload>
+    </Set>
+    <IgnoreUnresolvedVariables>false</IgnoreUnresolvedVariables>
+</AssignMessage>

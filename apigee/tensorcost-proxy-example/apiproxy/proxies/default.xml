@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<ProxyEndpoint name="default">
+    <PreFlow name="PreFlow">
+        <Request>
+            <Step>
+                <Name>VerifyAPIKey</Name>
+            </Step>
+            <!-- After VerifyAPIKey, before your own policies that can refuse a call. -->
+            <Step>
+                <Name>FC-TensorCostAdmit</Name>
+            </Step>
+        </Request>
+        <Response/>
+    </PreFlow>
+    <!-- A streamed call's row goes once the stream has reached the client. -->
+    <PostClientFlow name="PostClientFlow">
+        <Response>
+            <Step>
+                <Name>FC-TensorCostUsageFinal</Name>
+                <Condition>tensorcost.stream_row = "true"</Condition>
+            </Step>
+        </Response>
+    </PostClientFlow>
+    <!-- A proxy has one DefaultFaultRule: merge this step into yours if it has one. -->
+    <DefaultFaultRule name="tensorcost">
+        <Step>
+            <Name>FC-TensorCostUsage</Name>
+        </Step>
+        <AlwaysEnforce>true</AlwaysEnforce>
+    </DefaultFaultRule>
+    <HTTPProxyConnection>
+        <BasePath>/llm</BasePath>
+    </HTTPProxyConnection>
+    <RouteRule name="default">
+        <TargetEndpoint>default</TargetEndpoint>
+    </RouteRule>
+</ProxyEndpoint>

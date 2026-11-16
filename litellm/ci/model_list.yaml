@@ -1,0 +1,10 @@
+# A model that answers without calling anyone (LiteLLM's mock_response), for
+# the end-to-end job. The job appends tensorcost.yaml, the exact lines the
+# TensorCost console gives a customer, to make the proxy's config.yaml.
+model_list:
+  - model_name: mock-model
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: sk-not-a-real-key
+      mock_response: "Hello from the mock model."
+

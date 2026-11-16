@@ -1,0 +1,19 @@
+{
+  "name": "@tensorcost/admit-conformance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Client conformance cases for the TensorCost admit protocol, run against @tensorcost/admit-mock.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./lib/runner.mjs",
+    "./reference-client": "./lib/reference-client.mjs",
+    "./cases.json": "./cases.json"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

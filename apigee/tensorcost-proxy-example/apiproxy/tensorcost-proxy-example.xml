@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<APIProxy revision="1" name="tensorcost-proxy-example">
+    <DisplayName>tensorcost-proxy-example</DisplayName>
+    <Description>An LLM proxy with TensorCost's budget check, usage report and streamed usage attached.</Description>
+    <Policies>
+        <Policy>VerifyAPIKey</Policy>
+        <Policy>FC-TensorCostAdmit</Policy>
+        <Policy>FC-TensorCostUsage</Policy>
+        <Policy>FC-TensorCostUsageFinal</Policy>
+        <Policy>TC-StreamUsage</Policy>
+        <Policy>TC-StreamTokenCount</Policy>
+    </Policies>
+    <Resources>
+        <Resource>jsc://tensorcost-common.js</Resource>
+        <Resource>jsc://tensorcost-stream.js</Resource>
+    </Resources>
+    <ProxyEndpoints>
+        <ProxyEndpoint>default</ProxyEndpoint>
+    </ProxyEndpoints>
+    <TargetEndpoints>
+        <TargetEndpoint>default</TargetEndpoint>
+    </TargetEndpoints>
+</APIProxy>

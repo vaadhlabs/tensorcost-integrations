@@ -1,0 +1,27 @@
+{
+  "name": "@tensorcost/admit-mock",
+  "version": "0.1.0",
+  "description": "A local stand-in for TensorCost's gateway admit route, for testing a gateway client against the admit protocol.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "admit-mock": "bin/admit-mock.mjs"
+  },
+  "exports": {
+    ".": "./src/server.mjs",
+    "./openapi": "./src/openapi.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "keywords": ["tensorcost", "llm", "gateway", "budget", "mock"],
+  "homepage": "https://tensorcost.com"
+}

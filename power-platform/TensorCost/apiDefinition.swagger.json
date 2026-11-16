@@ -1,0 +1,424 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "TensorCost",
+    "description": "Check a budget before an expensive step, record what an AI call cost, read a team's budget room, and start a flow when a budget crosses an alert threshold. For flows and Copilot Studio agents that make model calls with their own provider keys.",
+    "version": "1.0",
+    "contact": {
+      "name": "TensorCost",
+      "url": "https://tensorcost.com",
+      "email": "support@tensorcost.com"
+    }
+  },
+  "host": "api.tensorcost.com",
+  "basePath": "/v1",
+  "schemes": ["https"],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "paths": {
+    "/gateway/admit": {
+      "post": {
+        "operationId": "CheckBudget",
+        "summary": "Check budget",
+        "description": "Ask TensorCost whether a step fits the budgets. Branch on Decision: allow and reroute both mean go ahead as asked, refuse means stop and show Message. A refusal is a normal answer, not an error. Set this action's retry policy to None: asking twice for one step holds its cost twice.",
+        "x-ms-visibility": "important",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": { "$ref": "#/definitions/CheckBudgetRequest" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A decision. A refusal is also a 200.",
+            "schema": { "$ref": "#/definitions/CheckBudgetResponse" }
+          },
+          "default": {
+            "description": "TensorCost couldn't answer. Follow your own fail mode.",
+            "schema": { "$ref": "#/definitions/Failure" }
+          }
+        }
+      }
+    },
+    "/gateway/admit/{decision_id}/cancel": {
+      "post": {
+        "operationId": "CancelCheck",
+        "summary": "Cancel check",
+        "description": "Give back the hold of a step that provably never ran: the flow stopped before calling the provider, or the provider refused the call before doing any work (a 401, 403, 404 or 429). Never use it after a timeout, a 5xx, a 400, a retry or anything else that may have billed: cancelling lets other calls spend money the hard cap still has to count. Without a cancel the hold lapses after five minutes. Set this action's retry policy to None.",
+        "x-ms-visibility": "advanced",
+        "parameters": [
+          {
+            "name": "decision_id",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "format": "uuid",
+            "x-ms-summary": "Decision ID",
+            "description": "The Decision ID that Check budget returned."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done, whether or not there was a hold to cancel.",
+            "schema": { "$ref": "#/definitions/CancelCheckResponse" }
+          },
+          "default": {
+            "description": "TensorCost couldn't answer. The hold lapses on its own.",
+            "schema": { "$ref": "#/definitions/Failure" }
+          }
+        }
+      }
+    },
+    "/gateway/logs": {
+      "post": {
+        "operationId": "RecordAiSpend",
+        "summary": "Record AI spend",
+        "description": "Send one model call's tokens to TensorCost. Only for calls made with your own provider keys: a model that Microsoft bills, such as the AI Builder and Copilot Studio credits, isn't counted here. Log ID decides whether a retry counts the call once, so build it from what is unique to the call: concat('pp:', Decision ID) when the step was checked, else concat('pp:', Provider response ID), else guid(). With a guid() a re-run of the flow can count the call twice.",
+        "x-ms-visibility": "important",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "required": true,
+            "type": "string",
+            "default": "tensorcost",
+            "enum": ["tensorcost"],
+            "x-ms-visibility": "internal"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": { "$ref": "#/definitions/RecordAiSpendRequest" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What TensorCost counted.",
+            "schema": { "$ref": "#/definitions/RecordAiSpendResponse" }
+          },
+          "default": {
+            "description": "TensorCost couldn't take the row. Sending it again is safe: the same Log ID counts once.",
+            "schema": { "$ref": "#/definitions/Failure" }
+          }
+        }
+      }
+    },
+    "/gateway/headroom": {
+      "post": {
+        "operationId": "GetHeadroom",
+        "summary": "Get headroom",
+        "description": "How much room the budgets have for a team, a person or a step that costs about Estimate. Nothing is held. Leave everything out to ask about the whole workspace.",
+        "x-ms-visibility": "important",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": { "$ref": "#/definitions/GetHeadroomRequest" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The budgets that apply and what is left of each.",
+            "schema": { "$ref": "#/definitions/GetHeadroomResponse" }
+          },
+          "default": {
+            "description": "TensorCost couldn't answer.",
+            "schema": { "$ref": "#/definitions/Failure" }
+          }
+        }
+      }
+    },
+    "/gateway/subscriptions": {
+      "post": {
+        "operationId": "OnBudgetThresholdCrossed",
+        "summary": "When a budget crosses an alert threshold",
+        "description": "Starts the flow when one of the workspace's budgets crosses an alert threshold. The flow subscribes when it is turned on and unsubscribes when it is turned off or deleted.",
+        "x-ms-trigger": "single",
+        "x-ms-visibility": "important",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": { "$ref": "#/definitions/SubscribeRequest" }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Subscribed. The platform deletes the subscription at the path in Location.",
+            "headers": {
+              "Location": {
+                "description": "The subscription's path, /v1/gateway/subscriptions/{id}.",
+                "type": "string"
+              }
+            },
+            "schema": { "$ref": "#/definitions/SubscribeResponse" }
+          },
+          "default": {
+            "description": "TensorCost couldn't subscribe.",
+            "schema": { "$ref": "#/definitions/Failure" }
+          }
+        },
+        "x-ms-notification-content": {
+          "description": "A budget crossed an alert threshold.",
+          "schema": { "$ref": "#/definitions/BudgetThresholdCrossed" }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "Caller": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["environment", "user", "tag"],
+          "x-ms-summary": "Kind",
+          "description": "environment: the Power Platform environment's ID. user: a person's email. tag: key=value, such as team=search or cost-center=7."
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 256,
+          "x-ms-summary": "Value",
+          "description": "The environment ID, the email, or the key=value tag."
+        }
+      }
+    },
+    "Callers": {
+      "type": "array",
+      "maxItems": 32,
+      "x-ms-summary": "Callers",
+      "description": "Who the step is for. Send the flow's environment ID as kind environment (in a flow: workflow()['tags']['environmentName']), the person's email as kind user, and the team as kind tag with the value team=<team name or slug>. Use the same callers in Check budget and Record AI spend so the spend lands on the team its check was made for.",
+      "items": { "$ref": "#/definitions/Caller" }
+    },
+    "CheckBudgetRequest": {
+      "type": "object",
+      "required": ["model"],
+      "properties": {
+        "model": { "type": "string", "maxLength": 256, "x-ms-summary": "Model", "x-ms-visibility": "important", "description": "The model the step will call, as its provider names it." },
+        "provider": { "type": "string", "x-ms-summary": "Provider", "description": "anthropic, openai, aws.bedrock, azure.ai.openai, gcp.vertex_ai... An unknown provider skips provider budgets." },
+        "max_tokens": { "type": "integer", "minimum": 0, "x-ms-summary": "Max tokens", "description": "The output allowance. The hold is sized from it." },
+        "input_tokens": { "type": "integer", "minimum": 0, "x-ms-summary": "Input tokens", "description": "The prompt's size, if you can count it. With Max tokens it makes the hold the step's worst case." },
+        "callers": { "$ref": "#/definitions/Callers" },
+        "workflow_id": { "type": "string", "x-ms-summary": "Flow ID", "description": "The flow's ID, for reports. In a flow: workflow()['name']." },
+        "agent_id": { "type": "string", "x-ms-summary": "Agent ID", "description": "The Copilot Studio agent running the step, if any." },
+        "application": { "type": "string", "x-ms-summary": "Application", "x-ms-visibility": "advanced" },
+        "customer": { "type": "string", "maxLength": 128, "x-ms-summary": "Customer", "x-ms-visibility": "advanced", "description": "The end customer the step is for, the same ID your apps send TensorCost as x-tc-customer. The check is judged against that customer's limits. Send it in Record AI spend too." },
+        "can_reroute": { "type": "boolean", "default": false, "x-ms-visibility": "internal", "description": "A flow can't rewrite a step's model, so this is always false." }
+      }
+    },
+    "CheckBudgetResponse": {
+      "type": "object",
+      "properties": {
+        "decision": { "type": "string", "enum": ["allow", "refuse", "reroute"], "x-ms-summary": "Decision", "description": "allow or reroute: go ahead as asked. refuse: stop." },
+        "decision_id": { "type": "string", "x-ms-summary": "Decision ID", "description": "Pass to Record AI spend so the spend releases this hold." },
+        "reason": { "type": "string", "x-nullable": true, "x-ms-summary": "Reason" },
+        "message": { "type": "string", "x-nullable": true, "x-ms-summary": "Message", "description": "What to show the person. A refusal names the budget and who can raise it." },
+        "detail": { "type": "string", "x-ms-summary": "Detail" },
+        "retry_after_seconds": { "type": "integer", "x-ms-summary": "Retry after (seconds)" },
+        "budget": {
+          "type": "object",
+          "x-ms-summary": "Budget",
+          "properties": {
+            "id": { "type": "string" },
+            "name": { "type": "string" },
+            "period": { "type": "string", "x-nullable": true },
+            "cap_cents": { "type": "number", "x-nullable": true },
+            "spent_cents": { "type": "number", "x-nullable": true },
+            "held_cents": { "type": "number" }
+          }
+        },
+        "reservation_cents": { "type": "number", "x-ms-summary": "Reservation (cents)" },
+        "degraded": { "type": "boolean", "x-ms-summary": "Degraded", "description": "True when the step was decided without a full check." },
+        "fail_mode": { "type": "string", "enum": ["open", "closed"], "x-ms-summary": "Fail mode" },
+        "attribution": {
+          "type": "object",
+          "x-ms-summary": "Attribution",
+          "properties": {
+            "team": { "type": "string", "x-nullable": true },
+            "developer": { "type": "string", "x-nullable": true },
+            "unmapped": { "type": "array", "items": { "type": "string" }, "description": "Callers TensorCost has no alias for yet, as alias kind:value." }
+          }
+        }
+      }
+    },
+    "CancelCheckResponse": {
+      "type": "object",
+      "properties": {
+        "decision_id": { "type": "string", "x-ms-summary": "Decision ID" },
+        "cancelled": { "type": "boolean", "x-ms-summary": "Cancelled", "description": "False when there was nothing to cancel: the decision held nothing, was already cancelled, had expired, or isn't this connection's." }
+      }
+    },
+    "LogRow": {
+      "type": "object",
+      "required": ["log_id", "provider", "model", "input_tokens", "output_tokens", "started_at"],
+      "properties": {
+        "log_id": { "type": "string", "maxLength": 200, "x-ms-summary": "Log ID", "x-ms-visibility": "important", "description": "This row's own ID; a row sent again with the same ID counts once. Use concat('pp:', Decision ID), else concat('pp:', Provider response ID), else guid()." },
+        "provider": { "type": "string", "x-ms-summary": "Provider", "x-ms-visibility": "important", "description": "anthropic, openai, aws.bedrock, azure.ai.openai, gcp.vertex_ai..." },
+        "model": { "type": "string", "x-ms-summary": "Model", "x-ms-visibility": "important" },
+        "input_tokens": { "type": "integer", "minimum": 0, "x-ms-summary": "Input tokens", "x-ms-visibility": "important", "description": "All input tokens, cache reads and writes included." },
+        "output_tokens": { "type": "integer", "minimum": 0, "x-ms-summary": "Output tokens", "x-ms-visibility": "important" },
+        "cached_input_tokens": { "type": "integer", "minimum": 0, "x-ms-summary": "Cached input tokens", "description": "Of the input tokens, those read from the provider's cache." },
+        "cache_write_tokens": { "type": "integer", "minimum": 0, "x-ms-summary": "Cache write tokens", "description": "Of the input tokens, those written to the cache." },
+        "started_at": { "type": "string", "format": "date-time", "x-ms-summary": "Started at", "x-ms-visibility": "important", "description": "When the call began." },
+        "ended_at": { "type": "string", "format": "date-time", "x-ms-summary": "Ended at" },
+        "provider_response_id": { "type": "string", "x-ms-summary": "Provider response ID", "description": "The provider's own ID for the response (OpenAI's id, Anthropic's msg_...). It lets TensorCost count the call once if its bill or invocation log also shows it." },
+        "correlation_id": { "type": "string", "x-ms-summary": "Decision ID", "description": "The Decision ID from Check budget, if the step was checked. It ties this spend to the check and releases its hold." },
+        "callers": { "$ref": "#/definitions/Callers" },
+        "status": { "type": "string", "x-ms-summary": "Status", "description": "success or failure, or the HTTP status." },
+        "upstream_status": { "type": "integer", "x-ms-summary": "Provider HTTP status", "description": "The provider's own HTTP status, if you have it." },
+        "customer": { "type": "string", "maxLength": 128, "x-ms-summary": "Customer", "description": "The end customer the call was for, as in Check budget. The call counts toward that customer." }
+      }
+    },
+    "RecordAiSpendRequest": {
+      "type": "object",
+      "required": ["logs"],
+      "properties": {
+        "logs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 500,
+          "x-ms-summary": "Rows",
+          "description": "The calls to record. One row per call.",
+          "items": { "$ref": "#/definitions/LogRow" }
+        }
+      }
+    },
+    "RecordAiSpendResponse": {
+      "type": "object",
+      "properties": {
+        "received": { "type": "integer", "x-ms-summary": "Received" },
+        "inserted": { "type": "integer", "x-ms-summary": "Inserted", "description": "Rows stored." },
+        "deduped": { "type": "integer", "x-ms-summary": "Deduplicated", "description": "Rows already stored under the same Log ID." },
+        "skipped": { "type": "integer", "x-ms-summary": "Skipped", "description": "Rows TensorCost read but didn't keep, such as a call that was never billed." },
+        "parse_errors": {
+          "type": "array",
+          "x-ms-summary": "Unreadable rows",
+          "description": "Rows TensorCost couldn't read. Check this: a row in this list was not recorded.",
+          "items": { "type": "object", "properties": { "reason": { "type": "string" } } }
+        }
+      }
+    },
+    "GetHeadroomRequest": {
+      "type": "object",
+      "properties": {
+        "team": { "type": "string", "maxLength": 256, "x-ms-summary": "Team", "x-ms-visibility": "important", "description": "The TensorCost team's name, slug or ID. Wins over the team the callers resolve to." },
+        "developer": { "type": "string", "maxLength": 256, "x-ms-summary": "Person's email", "description": "The person's email. Their team is used when they are on exactly one." },
+        "provider": { "type": "string", "maxLength": 256, "x-ms-summary": "Provider" },
+        "model": { "type": "string", "maxLength": 256, "x-ms-summary": "Model" },
+        "estimate_cents": { "type": "number", "minimum": 0, "maximum": 1000000000, "x-ms-summary": "Estimate (cents)", "description": "What the step is expected to cost. Leave out or 0 to ask only whether a hard cap is already at its limit." },
+        "callers": { "$ref": "#/definitions/Callers" }
+      }
+    },
+    "HeadroomBudget": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "period": { "type": "string", "x-nullable": true },
+        "mode": { "type": "string", "enum": ["hard_cap", "soft_cap"] },
+        "cap_cents": { "type": "number" },
+        "spent_cents": { "type": "number", "x-nullable": true },
+        "held_cents": { "type": "number" },
+        "remaining_cents": { "type": "number", "x-nullable": true },
+        "burn_pct": { "type": "number", "x-nullable": true }
+      }
+    },
+    "GetHeadroomResponse": {
+      "type": "object",
+      "properties": {
+        "allowed": { "type": "boolean", "x-ms-summary": "Allowed", "description": "False when the estimate would take a hard cap over, or one is at its limit or not counted yet." },
+        "binding": { "$ref": "#/definitions/HeadroomBudget" },
+        "budgets": { "type": "array", "x-ms-summary": "Budgets", "items": { "$ref": "#/definitions/HeadroomBudget" } },
+        "counted_spend_mtd_cents": { "type": "number", "x-ms-summary": "Counted spend this month (cents)" },
+        "counted_spend_scope": { "type": "string", "enum": ["team", "workspace"], "x-ms-summary": "Spend scope" },
+        "estimate_cents": { "type": "number", "x-ms-summary": "Estimate (cents)" },
+        "attribution": {
+          "type": "object",
+          "x-ms-summary": "Attribution",
+          "properties": {
+            "team": { "type": "string", "x-nullable": true },
+            "developer": { "type": "string", "x-nullable": true },
+            "unmapped": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "SubscribeRequest": {
+      "type": "object",
+      "required": ["url", "event_types"],
+      "properties": {
+        "url": { "type": "string", "maxLength": 2048, "x-ms-notification-url": true, "x-ms-visibility": "internal" },
+        "event_types": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "default": ["budget.threshold_crossed"],
+          "x-ms-visibility": "internal",
+          "items": { "type": "string", "enum": ["budget.threshold_crossed"] }
+        }
+      }
+    },
+    "SubscribeResponse": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "url": { "type": "string" },
+        "event_types": { "type": "array", "items": { "type": "string" } },
+        "signing_secret": { "type": "string", "x-ms-visibility": "internal" }
+      }
+    },
+    "BudgetThresholdCrossed": {
+      "type": "object",
+      "properties": {
+        "event": { "type": "string", "x-ms-summary": "Event" },
+        "budget": {
+          "type": "object",
+          "x-ms-summary": "Budget",
+          "properties": {
+            "id": { "type": "string", "x-ms-summary": "Budget ID" },
+            "name": { "type": "string", "x-ms-summary": "Budget name" },
+            "period": { "type": "string", "x-ms-summary": "Period" },
+            "cap_cents": { "type": "number", "x-ms-summary": "Cap (cents)" }
+          }
+        },
+        "threshold_pct": { "type": "number", "x-ms-summary": "Threshold (%)" },
+        "spent_cents": { "type": "number", "x-ms-summary": "Spent (cents)" },
+        "crossed_at": { "type": "string", "format": "date-time", "x-ms-summary": "Crossed at" },
+        "scope": {
+          "type": "object",
+          "x-ms-summary": "Scope",
+          "properties": {
+            "team": { "type": "string", "x-ms-summary": "Team" },
+            "developer": { "type": "string", "x-ms-summary": "Developer" },
+            "provider": { "type": "string", "x-ms-summary": "Provider" }
+          }
+        }
+      }
+    },
+    "Failure": {
+      "type": "object",
+      "properties": {
+        "error": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  },
+  "parameters": {},
+  "responses": {},
+  "securityDefinitions": {
+    "api_key": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization",
+      "description": "Bearer followed by your TensorCost gateway key: Bearer tcgw_..."
+    }
+  },
+  "security": [{ "api_key": [] }],
+  "tags": []
+}

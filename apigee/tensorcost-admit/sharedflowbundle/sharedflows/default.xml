@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<!--
+  tensorcost-admit: include it with a FlowCallout in each LLM proxy's request PreFlow,
+  after the VerifyAPIKey policy VerifyAPIKey and before policies of your own that can refuse a call.
+  Fail mode when TensorCost can't answer: open.
+-->
+<SharedFlow name="default">
+    <Step>
+        <Name>TC-Key</Name>
+    </Step>
+    <Step>
+        <Name>TC-Correlation</Name>
+    </Step>
+    <Step>
+        <Name>TC-Prepare</Name>
+    </Step>
+    <Step>
+        <Name>TC-TokenQuota</Name>
+        <Condition>tensorcost.quota_on = "true"</Condition>
+    </Step>
+    <Step>
+        <Name>TC-QuotaRefuse</Name>
+        <Condition>(tensorcost.quota_on = "true") and (ratelimit.TC-TokenQuota.failed = "true")</Condition>
+    </Step>
+    <Step>
+        <Name>TC-LookupFailMode</Name>
+    </Step>
+    <Step>
+        <Name>TC-LookupAllow</Name>
+    </Step>
+    <Step>
+        <Name>TC-Admit</Name>
+        <Condition>tensorcost.cached_allow != "allow"</Condition>
+    </Step>
+    <Step>
+        <Name>TC-ReadAnswer</Name>
+        <Condition>tensorcost.cached_allow != "allow"</Condition>
+    </Step>
+    <Step>
+        <Name>TC-Decide</Name>
+        <Condition>tensorcost.cached_allow != "allow"</Condition>
+    </Step>
+    <Step>
+        <Name>TC-RememberFailMode</Name>
+        <Condition>tensorcost.remember_fail_mode = "true"</Condition>
+    </Step>
+    <Step>
+        <Name>TC-Unavailable-RetryAfter</Name>
+        <Condition>(tensorcost.unavailable = "true") and (tensorcost.has_retry_after = "true")</Condition>
+    </Step>
+    <Step>
+        <Name>TC-Unavailable</Name>
+        <Condition>(tensorcost.unavailable = "true") and (tensorcost.has_retry_after != "true")</Condition>
+    </Step>
+    <Step>
+        <Name>TC-Refuse-RetryAfter</Name>
+        <Condition>(tcAnswer.decision = "refuse") and (tensorcost.unavailable != "true") and (tensorcost.has_retry_after = "true")</Condition>
+    </Step>
+    <Step>
+        <Name>TC-Refuse</Name>
+        <Condition>(tcAnswer.decision = "refuse") and (tensorcost.unavailable != "true") and (tensorcost.has_retry_after != "true")</Condition>
+    </Step>
+    <Step>
+        <Name>TC-Reroute</Name>
+        <Condition>(tcAnswer.decision = "reroute") and (tensorcost.reroute = "true")</Condition>
+    </Step>
+    <Step>
+        <Name>TC-RememberAllow</Name>
+        <Condition>(tcAnswer.decision = "allow") and (tensorcost.cache_allow = "true")</Condition>
+    </Step>
+</SharedFlow>

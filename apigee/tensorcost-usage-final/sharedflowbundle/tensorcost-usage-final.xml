@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<SharedFlowBundle revision="1" name="tensorcost-usage-final">
+    <DisplayName>tensorcost-usage-final</DisplayName>
+    <Description>Reports a streamed model call to TensorCost once the stream has ended, without its content.</Description>
+    <Policies>
+        <Policy>TC-StreamLog</Policy>
+    </Policies>
+    <Resources>
+    </Resources>
+    <SharedFlows>
+        <SharedFlow>default</SharedFlow>
+    </SharedFlows>
+</SharedFlowBundle>

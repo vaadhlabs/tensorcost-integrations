@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<ExtractVariables name="TC-ReadAnswer" continueOnError="true">
+    <DisplayName>TC-ReadAnswer</DisplayName>
+    <!-- tcAdmit.content: decision, model and message. TC-Decide clears decision unless the answer was a 200. -->
+    <Source clearPayload="false">tcAdmit</Source>
+    <VariablePrefix>tcAnswer</VariablePrefix>
+    <JSONPayload>
+        <Variable name="decision">
+            <JSONPath>$.decision</JSONPath>
+        </Variable>
+        <Variable name="model">
+            <JSONPath>$.model</JSONPath>
+        </Variable>
+        <Variable name="message">
+            <JSONPath>$.message</JSONPath>
+        </Variable>
+    </JSONPayload>
+    <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</ExtractVariables>

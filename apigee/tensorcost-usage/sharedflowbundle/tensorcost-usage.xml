@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<SharedFlowBundle revision="1" name="tensorcost-usage">
+    <DisplayName>tensorcost-usage</DisplayName>
+    <Description>Counts each model call's tokens against the pushed product quota and reports the call to TensorCost, without its content.</Description>
+    <Policies>
+        <Policy>TC-UsageKey</Policy>
+        <Policy>TC-UsageRead</Policy>
+        <Policy>TC-TokenCount</Policy>
+        <Policy>TC-UsageRow</Policy>
+        <Policy>TC-UsageLog</Policy>
+        <Policy>TC-Cancel</Policy>
+    </Policies>
+    <Resources>
+        <Resource>jsc://tensorcost-common.js</Resource>
+        <Resource>jsc://tensorcost-usage.js</Resource>
+    </Resources>
+    <SharedFlows>
+        <SharedFlow>default</SharedFlow>
+    </SharedFlows>
+</SharedFlowBundle>

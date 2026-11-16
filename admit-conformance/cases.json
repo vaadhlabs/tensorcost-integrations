@@ -1,0 +1,208 @@
+{
+  "version": 1,
+  "about": "Client conformance cases for the TensorCost admit protocol (spec/admit/README.md). Each case runs against @tensorcost/admit-mock; the caller id in each call step picks the mock's answer. README.md next to this file says how to run them.",
+  "client": {
+    "models": ["claude-sonnet-4-5", "claude-haiku-4-5"],
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 1000,
+    "timeout_ms": 1000
+  },
+  "cases": [
+    {
+      "id": "allow-sends-the-call",
+      "level": "must",
+      "rule": "The decision",
+      "summary": "An allow sends the call as asked.",
+      "client": { "fail_mode": "open" },
+      "steps": [
+        { "call": "team-search", "expect": { "outcome": "sent", "model": "claude-sonnet-4-5", "admit": "asked" } }
+      ],
+      "after": { "admits": 1, "cancels": 0 }
+    },
+    {
+      "id": "refusal-arrives-as-200",
+      "level": "must",
+      "rule": "Refusals arrive as 200",
+      "summary": "A budget refusal is a 200. The client blocks the call and shows TensorCost's message, even with fail mode open, and asks once.",
+      "client": { "fail_mode": "open" },
+      "steps": [
+        { "call": "refuse-search", "expect": { "outcome": "blocked", "admit": "asked", "message_contains": "Search team" } }
+      ],
+      "after": { "admits": 1, "cancels": 0 }
+    },
+    {
+      "id": "closed-workspace-refusal-is-a-refusal",
+      "level": "must",
+      "rule": "Refusals arrive as 200",
+      "summary": "A check_unavailable refusal (the workspace's fail mode is closed) blocks the call, whatever fail mode the client was set up with.",
+      "client": { "fail_mode": "open" },
+      "steps": [
+        { "call": "unavailable-search", "expect": { "outcome": "blocked", "admit": "asked" } }
+      ],
+      "after": { "admits": 1, "cancels": 0 }
+    },
+    {
+      "id": "throttled-is-a-decision-not-a-failure",
+      "level": "must",
+      "rule": "Refusals arrive as 200",
+      "summary": "Past its admit rate a connection still gets a 200 decided by the workspace's fail mode. The client follows the decision: an open workspace's degraded allow sends the call even from a client set to fail closed.",
+      "client": { "fail_mode": "closed" },
+      "workspace_fail_mode": "open",
+      "steps": [
+        { "call": "throttled-search", "expect": { "outcome": "sent", "admit": "asked" } }
+      ],
+      "after": { "admits": 1, "cancels": 0 }
+    },
+    {
+      "id": "timeout-fail-open-sends-the-call",
+      "level": "must",
+      "rule": "Fail open and fail closed",
+      "summary": "No answer within the client's timeout is TensorCost failing. Fail open sends the call, and the admit is not sent again.",
+      "client": { "fail_mode": "open" },
+      "steps": [
+        { "call": "slow-1500", "expect": { "outcome": "sent", "admit": "asked" } }
+      ],
+      "after": { "admits": 1, "cancels": 0 }
+    },
+    {
+      "id": "timeout-fail-closed-blocks-the-call",
+      "level": "must",
+      "rule": "Fail open and fail closed",
+      "summary": "No answer within the client's timeout, fail closed: the call is blocked, and the admit is not sent again.",
+      "client": { "fail_mode": "closed" },
+      "steps": [
+        { "call": "slow-1500", "expect": { "outcome": "blocked", "admit": "asked" } }
+      ],
+      "after": { "admits": 1, "cancels": 0 }
+    },
+    {
+      "id": "error-fail-open-sends-the-call",
+      "level": "must",
+      "rule": "Fail open and fail closed",
+      "summary": "A non-2xx, or a 200 whose body is not a decision, is TensorCost failing. Fail open sends each call, asking once each.",
+      "client": { "fail_mode": "open" },
+      "steps": [
+        { "call": "error-503", "expect": { "outcome": "sent", "admit": "asked" } },
+        { "call": "error-500", "expect": { "outcome": "sent", "admit": "asked" } },
+        { "call": "error-401", "expect": { "outcome": "sent", "admit": "asked" } },
+        { "call": "error-not-json", "expect": { "outcome": "sent", "admit": "asked" } }
+      ],
+      "after": { "admits": 4, "cancels": 0 }
+    },
+    {
+      "id": "error-fail-closed-blocks-the-call",
+      "level": "must",
+      "rule": "Fail open and fail closed",
+      "summary": "A non-2xx, or a 200 whose body is not a decision, fail closed: each call is blocked, asking once each.",
+      "client": { "fail_mode": "closed" },
+      "steps": [
+        { "call": "error-503", "expect": { "outcome": "blocked", "admit": "asked" } },
+        { "call": "error-not-json", "expect": { "outcome": "blocked", "admit": "asked" } }
+      ],
+      "after": { "admits": 2, "cancels": 0 }
+    },
+    {
+      "id": "fail-mode-unknown-is-not-adopted",
+      "level": "must",
+      "rule": "Fail open and fail closed",
+      "summary": "An answer with fail_mode_known false was decided by the default, not the workspace. A client set to fail closed stays closed after it, so the next timeout still blocks.",
+      "client": { "fail_mode": "closed" },
+      "steps": [
+        { "call": "unknown-mode-search", "expect": { "outcome": "sent", "admit": "asked" } },
+        { "call": "slow-1500", "expect": { "outcome": "blocked", "admit": "asked" } }
+      ],
+      "after": { "admits": 2, "cancels": 0 }
+    },
+    {
+      "id": "degraded-allow-sends-the-call-and-is-not-reused",
+      "level": "must",
+      "rule": "Caching an allow",
+      "summary": "A degraded allow sends the call. It carries cache_ttl_seconds 0, so the next call asks again.",
+      "client": { "fail_mode": "open" },
+      "steps": [
+        { "call": "degraded-search", "expect": { "outcome": "sent", "admit": "asked" } },
+        { "call": "degraded-search", "expect": { "outcome": "sent", "admit": "asked" } }
+      ],
+      "after": { "admits": 2, "cancels": 0 }
+    },
+    {
+      "id": "ttl-zero-allow-is-never-reused",
+      "level": "must",
+      "rule": "Caching an allow",
+      "summary": "An allow with cache_ttl_seconds 0 (every allow that placed a hold) is never reused: each call asks.",
+      "client": { "fail_mode": "open" },
+      "steps": [
+        { "call": "team-search", "expect": { "outcome": "sent", "admit": "asked" } },
+        { "call": "team-search", "expect": { "outcome": "sent", "admit": "asked" } },
+        { "call": "team-search", "expect": { "outcome": "sent", "admit": "asked" } }
+      ],
+      "after": { "admits": 3, "cancels": 0 }
+    },
+    {
+      "id": "allow-cached-no-longer-than-its-ttl",
+      "level": "must",
+      "rule": "Caching an allow",
+      "summary": "An allow with cache_ttl_seconds 1 may be reused for a second, for the same caller and model, and no longer. A client that never caches passes too.",
+      "client": { "fail_mode": "open" },
+      "steps": [
+        { "call": "cache-1", "expect": { "outcome": "sent", "admit": "asked" } },
+        { "call": "cache-1", "expect": { "outcome": "sent", "admit": "either" } },
+        { "wait_ms": 1150 },
+        { "call": "cache-1", "expect": { "outcome": "sent", "admit": "asked" } }
+      ]
+    },
+    {
+      "id": "reroute-is-followed-by-a-client-that-can-rewrite-the-model",
+      "level": "should",
+      "needs": ["reroute"],
+      "rule": "Reroute is advice",
+      "summary": "A reroute names a model the client listed in accepts_models. A client that can rewrite the call's model sends the call to it.",
+      "client": { "fail_mode": "open" },
+      "steps": [
+        { "call": "reroute-claude-haiku-4-5", "expect": { "outcome": "sent", "model": "claude-haiku-4-5", "admit": "asked" } }
+      ],
+      "after": { "admits": 1, "cancels": 0 }
+    },
+    {
+      "id": "a-client-that-cannot-reroute-opts-out",
+      "level": "must",
+      "needs": ["no_reroute"],
+      "rule": "Reroute is advice",
+      "summary": "A client that can't rewrite the model sends can_reroute false, and the call goes as asked.",
+      "client": { "fail_mode": "open" },
+      "steps": [
+        { "call": "reroute-claude-haiku-4-5", "expect": { "outcome": "sent", "model": "claude-sonnet-4-5", "admit": "asked", "request_has": { "can_reroute": false } } }
+      ],
+      "after": { "admits": 1, "cancels": 0 }
+    },
+    {
+      "id": "cancel-a-call-that-never-ran",
+      "level": "should",
+      "needs": ["cancel"],
+      "rule": "Cancel only calls that never ran",
+      "summary": "An allowed call the provider refused with a 401 before any model work was never billed. The client cancels its hold, once.",
+      "client": { "fail_mode": "open" },
+      "steps": [
+        { "call": "team-search", "expect": { "outcome": "sent", "admit": "asked" } },
+        { "fail": { "status": 401 }, "expect": { "cancel": "sent" } }
+      ],
+      "after": { "admits": 1, "cancels": 1 }
+    },
+    {
+      "id": "no-cancel-and-no-resend-after-a-billed-or-unknown-answer",
+      "level": "must",
+      "rule": "Never retry after a billed or unknown answer",
+      "summary": "A 5xx, a timeout or a 400 from the provider may have been billed. The client leaves the hold alone, and sending the call again is a new call that asks admit again.",
+      "client": { "fail_mode": "open" },
+      "steps": [
+        { "call": "team-search", "expect": { "outcome": "sent", "admit": "asked" } },
+        { "fail": { "status": 500 }, "expect": { "cancel": "not_sent" } },
+        { "call": "team-search", "expect": { "outcome": "sent", "admit": "asked" } },
+        { "fail": { "timeout": true }, "expect": { "cancel": "not_sent" } },
+        { "call": "team-search", "expect": { "outcome": "sent", "admit": "asked" } },
+        { "fail": { "status": 400 }, "expect": { "cancel": "not_sent" } }
+      ],
+      "after": { "admits": 3, "cancels": 0 }
+    }
+  ]
+}

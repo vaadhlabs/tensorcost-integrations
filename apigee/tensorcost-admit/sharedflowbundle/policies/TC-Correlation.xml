@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<AssignMessage name="TC-Correlation">
+    <DisplayName>TC-Correlation</DisplayName>
+    <!-- The call's correlation id is Apigee's own messageid; a caller's header is overwritten. -->
+    <AssignTo createNew="false" transport="http" type="request"/>
+    <Set>
+        <Headers>
+            <Header name="x-tensorcost-correlation-id">{messageid}</Header>
+        </Headers>
+    </Set>
+    <IgnoreUnresolvedVariables>false</IgnoreUnresolvedVariables>
+</AssignMessage>

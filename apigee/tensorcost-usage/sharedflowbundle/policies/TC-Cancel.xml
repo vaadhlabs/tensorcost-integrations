@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<ServiceCallout name="TC-Cancel" continueOnError="true" enabled="true">
+    <DisplayName>TC-Cancel</DisplayName>
+    <!-- An allowed call that never reached the target: its hold goes now. No <Response>: the proxy doesn't wait, and a lost push isn't seen here. -->
+    <Request variable="tcCancelRequest" clearPayload="true">
+        <Set>
+            <Headers>
+                <Header name="Authorization">Bearer {private.tensorcost.key}</Header>
+                <Header name="User-Agent">TensorCost-Apigee/1.0.0</Header>
+            </Headers>
+            <Verb>POST</Verb>
+        </Set>
+        <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+    </Request>
+    <Timeout>1000</Timeout>
+    <HTTPTargetConnection>
+        <URL>https://tensorcost.example.com/api/inference-proxy/v1/gateway/admit/{tensorcost.decision_id}/cancel</URL>
+    </HTTPTargetConnection>
+</ServiceCallout>

@@ -1,0 +1,33 @@
+<!--
+  TensorCost on-error, the partner of tensorcost-admit (fragment id tensorcost-on-error).
+  Include it first in the on-error section of each API that includes tensorcost-admit:
+    <include-fragment fragment-id="tensorcost-on-error" />
+  Apache-2.0. See README.md.
+-->
+<fragment>
+	<choose>
+		<!-- Refused by a later inbound policy after TensorCost allowed it: never forwarded, so its hold goes now. -->
+		<when condition='@(context.LastError != null &amp;&amp; context.LastError.Section == "inbound" &amp;&amp; context.Variables.ContainsKey("tcDecisionId") &amp;&amp; ((string)context.Variables["tcDecisionId"]) != "")'>
+			<send-one-way-request mode="new" timeout="1">
+				<set-url>@("https://tensorcost.example.com/api/inference-proxy/v1/gateway/admit/" + Uri.EscapeDataString(((string)context.Variables["tcDecisionId"])) + "/cancel")</set-url>
+				<set-method>POST</set-method>
+				<set-header name="Authorization" exists-action="override">
+					<value>Bearer {{tensorcost-gateway-key}}</value>
+				</set-header>
+				<set-header name="User-Agent" exists-action="override">
+					<value>TensorCost-APIM/1.0.0</value>
+				</set-header>
+			</send-one-way-request>
+		</when>
+		<!-- The check itself failed (under closed a timeout is an error). Refuse it as the admit fragment does. -->
+		<when condition='@(context.LastError != null &amp;&amp; context.LastError.Source == "send-request" &amp;&amp; context.Variables.ContainsKey("tcCacheKey") &amp;&amp; !context.Variables.ContainsKey("tcAnswer"))'>
+			<return-response>
+				<set-status code="503" reason="Service Unavailable" />
+				<set-header name="Content-Type" exists-action="override">
+					<value>application/json</value>
+				</set-header>
+				<set-body>@(new JObject(new JProperty("error", new JObject(new JProperty("type", "budget_check_unavailable"), new JProperty("message", "TensorCost couldn't check this call's budget, and this gateway refuses calls it can't check.")))).ToString(Newtonsoft.Json.Formatting.None))</set-body>
+			</return-response>
+		</when>
+	</choose>
+</fragment>

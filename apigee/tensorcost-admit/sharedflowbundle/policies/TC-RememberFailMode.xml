@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<PopulateCache name="TC-RememberFailMode">
+    <DisplayName>TC-RememberFailMode</DisplayName>
+    <CacheKey>
+        <Prefix>tensorcost</Prefix>
+        <KeyFragment>fail-mode</KeyFragment>
+    </CacheKey>
+    <ExpirySettings>
+        <TimeoutInSeconds>86400</TimeoutInSeconds>
+    </ExpirySettings>
+    <Source>tensorcost.seen_fail_mode</Source>
+</PopulateCache>

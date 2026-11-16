@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<Javascript name="TC-Decide" timeLimit="200">
+    <DisplayName>TC-Decide</DisplayName>
+    <Properties>
+        <Property name="step">decide</Property>
+        <Property name="failMode">open</Property>
+        <Property name="verifyApiKeyPolicy">VerifyAPIKey</Property>
+    </Properties>
+    <IncludeURL>jsc://tensorcost-common.js</IncludeURL>
+    <ResourceURL>jsc://tensorcost-admit.js</ResourceURL>
+</Javascript>

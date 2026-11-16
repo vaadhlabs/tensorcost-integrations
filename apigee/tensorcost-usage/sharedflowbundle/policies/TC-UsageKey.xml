@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- TensorCost for Apigee. Apache-2.0. See README.md. -->
+<KeyValueMapOperations name="TC-UsageKey" mapIdentifier="tensorcost">
+    <DisplayName>TC-UsageKey</DisplayName>
+    <!-- The connection's key, from the encrypted environment KVM "tensorcost". private.* is masked in trace. -->
+    <Scope>environment</Scope>
+    <ExpiryTimeInSecs>300</ExpiryTimeInSecs>
+    <Get assignTo="private.tensorcost.key">
+        <Key>
+            <Parameter>tensorcost-gateway-key</Parameter>
+        </Key>
+    </Get>
+</KeyValueMapOperations>
