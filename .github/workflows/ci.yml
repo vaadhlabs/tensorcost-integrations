@@ -63,7 +63,7 @@ jobs:
   litellm:
     runs-on: ubuntu-latest
     env:
-      LITELLM_VERSION: "1.109.1"
+      LITELLM_VERSION: "1.108.9"
     defaults:
       run:
         working-directory: litellm
@@ -101,7 +101,7 @@ jobs:
           docker run -d --name litellm --network host \
             -e DATABASE_URL=postgresql://postgres:litellm@localhost:5432/litellm \
             -e LITELLM_MASTER_KEY=sk-ci-master \
-            ghcr.io/berriai/litellm:main-v1.109.1 --port 4000
+            ghcr.io/berriai/litellm:v1.108.9 --port 4000
           for i in $(seq 1 60); do
             curl -sf http://localhost:4000/health/liveliness && break
             sleep 2
@@ -140,7 +140,7 @@ jobs:
             -e PYTHONPATH=/plugin \
             -e TENSORCOST_URL=http://localhost:8787 -e TENSORCOST_GATEWAY_KEY=tcgw_ci_key \
             -e LITELLM_MASTER_KEY=sk-ci-master \
-            ghcr.io/berriai/litellm:main-v1.109.1 --config /app/config.yaml --port 4000
+            ghcr.io/berriai/litellm:v1.108.9 --config /app/config.yaml --port 4000
       - run: python litellm/ci/e2e.py http://localhost:4000 http://localhost:8787
       - if: failure()
         run: docker logs litellm | tail -200
