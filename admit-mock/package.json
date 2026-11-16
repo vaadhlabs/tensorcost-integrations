@@ -14,7 +14,8 @@
   "files": [
     "bin",
     "src",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=18.17"
@@ -22,6 +23,20 @@
   "scripts": {
     "test": "node --test test/*.test.mjs"
   },
-  "keywords": ["tensorcost", "llm", "gateway", "budget", "mock"],
-  "homepage": "https://tensorcost.com"
+  "keywords": [
+    "tensorcost",
+    "llm",
+    "gateway",
+    "budget",
+    "mock"
+  ],
+  "homepage": "https://tensorcost.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vaadhlabs/tensorcost-integrations.git",
+    "directory": "admit-mock"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }
