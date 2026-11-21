@@ -118,7 +118,10 @@ customer's figures.
   budget and who can raise it. A refusal because TensorCost couldn't check
   the call (`check_unavailable`, `invalid_request`) is a 503
   `budget_check_unavailable` instead, so a client doesn't take an outage for
-  a spent budget.
+  a spent budget. A refusal no wait can change (`model_governance_denied`,
+  `compliance_denied`, `run_stopped`) is a 403
+  `{"error": {"type": "permission_denied", "reason": ...}}`, so a client
+  doesn't back off and retry a call that can never pass.
 - **reroute**: `model` is set to the model TensorCost names. The decision
   covers that one attempt.
 

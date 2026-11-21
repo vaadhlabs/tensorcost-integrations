@@ -59,6 +59,9 @@ MAX_TAGS = 32
 
 #: Statuses that refuse a call before any model work, at every provider.
 NEVER_BILLED_STATUSES = frozenset({401, 403, 404, 429})
+
+#: Refusals waiting won't change, answered 403 rather than 429.
+POLICY_REFUSAL_REASONS = frozenset({"model_governance_denied", "compliance_denied", "run_stopped"})
 #: How long the prompt's token count may take before the check goes without it.
 TOKEN_COUNT_BUDGET_SECONDS = 0.25
 #: Refusal reasons that mean TensorCost couldn't check, not that a budget is spent.
@@ -417,6 +420,15 @@ def _refusal(answer: Dict[str, Any]) -> HTTPException:
     message = text(answer.get("message"), 2000) or (
         f"TensorCost refused this call ({reason})." if reason else "TensorCost refused this call."
     )
+    if reason in POLICY_REFUSAL_REASONS:
+        # A model the workspace doesn't allow, a compliance rule, a stopped
+        # run: no amount of waiting lets it through, so not a 429 a client
+        # would back off on and retry.
+        policy: Dict[str, Any] = {"type": "permission_denied", "reason": reason, "message": message}
+        decision = text(answer.get("decision_id"), 100)
+        if decision:
+            policy["decision_id"] = decision
+        return HTTPException(status_code=403, detail={"error": policy})
     error: Dict[str, Any] = {"type": "budget_exceeded", "message": message}
     if reason:
         error["reason"] = reason
@@ -526,6 +538,12 @@ def model_info_from_list(model_list: Sequence[Any]) -> ModelInfo:
         provider = text(_get(params, "custom_llm_provider"))
         if model and not provider and "/" in model:
             provider = model.split("/", 1)[0]
+        # litellm_params.model carries LiteLLM's routing prefix
+        # ("openai/gpt-4.1-mini"); TensorCost wants the provider's own model
+        # id beside the provider. Sent with the prefix, governance looked up
+        # "openai/openai/gpt-4.1-mini" and refused every approved model.
+        if model and provider and model.lower().startswith(provider.lower() + "/"):
+            model = model[len(provider) + 1 :] or model
         # The first deployment of a name speaks for it.
         deployments.setdefault(name, (model, provider))
     return names, deployments
