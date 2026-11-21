@@ -21,7 +21,7 @@ CUSTOMER_METADATA_KEY = "tensorcost_customer"
 MAX_CUSTOMER = 128
 
 #: The plugin's version, which every request to TensorCost names in its User-Agent.
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 USER_AGENT = f"TensorCost-LiteLLM/{VERSION}"
 
 URL_ENV = "TENSORCOST_URL"

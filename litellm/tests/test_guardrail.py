@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+
+from tensorcost_litellm._shared import VERSION
 import copy
 import time
 import uuid
@@ -80,7 +82,7 @@ def test_allow_passes_the_request_through_and_sends_what_the_contract_reads(serv
     [hit] = server.hits("/v1/gateway/admit")
     assert hit["headers"]["authorization"] == "Bearer tcgw_test"
     # The plugin names itself; TensorCost's WAF blocks a request with no User-Agent.
-    assert hit["headers"]["user-agent"] == "TensorCost-LiteLLM/0.1.0"
+    assert hit["headers"]["user-agent"] == f"TensorCost-LiteLLM/{VERSION}"
     body = hit["body"]
     assert body["correlation_id"] == stamped
     assert body["model"] == "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
