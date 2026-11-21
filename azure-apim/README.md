@@ -92,7 +92,8 @@ request body only for `model`, `max_tokens` (or `max_completion_tokens`) and
   JSON). The fail mode decides: the one TensorCost last sent in its
   `x-tc-fail-mode` header (kept in the APIM cache for a day), else the one the
   fragment was rendered with. Closed refuses with a 503; open lets the call
-  through.
+  through. On the Consumption tier there is no cache to keep it in, so the
+  rendered one always decides: see [Fail mode](#fail-mode).
 - **Refuse.** A 429 whose body is
   `{"error":{"type":"budget_exceeded","message":…,"reason":…,"decision_id":…}}`,
   with `Retry-After` when TensorCost gives one. The message names the budget
@@ -108,7 +109,8 @@ request body only for `model`, `max_tokens` (or `max_completion_tokens`) and
 - **Allow.** Reused from the APIM cache for the same subscription, user,
   product, model, max_tokens and customer only when TensorCost says so:
   `cache_ttl_seconds` above 0 and `reservation_cents` exactly 0, for that many
-  seconds. A refusal, a reroute and a degraded answer are never cached.
+  seconds. A refusal, a reroute and a degraded answer are never cached. With
+  no cache (Consumption tier, no external cache) every call is checked.
 - **Never twice.** The fragment sends one check per call and never resends
   it. Don't wrap it in a `retry` policy: TensorCost treats a resend as a new
   call. The same goes for the common Azure OpenAI pattern of a `<retry>`
@@ -129,10 +131,36 @@ request body only for `model`, `max_tokens` (or `max_completion_tokens`) and
 
 ## Fail mode
 
-The workspace's fail mode is set in TensorCost (Connect › Gateways). To switch
-a deployed fragment by hand, change `ignore-error` on the `send-request` and
-the `default-value` of the `tensorcost:fail-mode` cache lookup together. The
-console says when a connection's fragment needs redeploying after a change.
+The workspace's fail mode is set in TensorCost (Connect › Gateways), and the
+console renders the fragment with the mode set there. Two things carry it in a
+deployed fragment:
+
+- the mode it was rendered with: `ignore-error` on the `send-request`, the
+  `default-value` of the `tensorcost:fail-mode` cache lookup, and the fallback
+  right after that lookup;
+- the mode TensorCost sends in `x-tc-fail-mode` on each answer, which the
+  fragment keeps in the APIM cache for a day and prefers over the rendered one.
+
+**Consumption tier.** Internal caching isn't available on APIM's Consumption
+tier (Microsoft's
+[caching docs](https://learn.microsoft.com/en-us/azure/api-management/api-management-howto-cache)
+say so), so the fragment can't keep the mode TensorCost sends, and the
+rendered mode is the only one it ever uses. A fragment rendered under "Let
+calls through" keeps letting calls through when TensorCost can't answer, even
+after an admin chooses "Refuse calls". After changing the fail mode, do one of:
+
+- render the fragments again in Connect › Gateways and import both into APIM
+  (re-import `tensorcost-admit` at least: it carries the mode);
+- configure an
+  [external cache](https://learn.microsoft.com/en-us/azure/api-management/api-management-howto-cache-external)
+  for the instance. The cache policies use it when one is configured, and the
+  fragment then follows a change on TensorCost's next answer, as on the other
+  tiers.
+
+To switch a deployed fragment by hand, change `ignore-error` on the
+`send-request`, the `default-value` of the `tensorcost:fail-mode` cache lookup
+and the mode in the `set-variable` after it, together. The console says when a
+connection's fragment needs redeploying after a change.
 
 ## Token quotas (optional)
 
