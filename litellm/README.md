@@ -14,9 +14,14 @@ pieces, both loaded by the proxy from its config:
 
 ## Install
 
-    pip install tensorcost-litellm
+Install it into the same Python environment as the proxy:
 
-Install it into the same Python environment as the proxy.
+    pip install "tensorcost-litellm @ git+https://github.com/vaadhlabs/tensorcost-integrations#subdirectory=litellm"
+
+It isn't on PyPI yet. Once the first release is published,
+`pip install tensorcost-litellm` will do the same. Pin a commit
+(`...tensorcost-integrations@<sha>#subdirectory=litellm`) if you want the
+install to repeat exactly.
 
 ## Configure
 
@@ -36,12 +41,21 @@ guardrails:
 
 litellm_settings:
   callbacks: ["tensorcost_litellm.spend_logger"]
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
 ```
 
 and set the environment:
 
     TENSORCOST_URL=https://<your TensorCost API host>/api/inference-proxy
     TENSORCOST_GATEWAY_KEY=tcgw_...
+    LITELLM_MASTER_KEY=<a long random secret>
+
+`LITELLM_MASTER_KEY` is LiteLLM's own admin key, not ours. We've seen
+LiteLLM 1.110 refuse to start without one (`UnsafeMasterKeyError`), so a
+config with only the TensorCost settings can fail at startup. If your proxy
+already has a master key, keep it.
 
 `default_on: true` runs the check on every call; without it LiteLLM runs a
 guardrail only for requests that name it. `callbacks` takes the module-level
