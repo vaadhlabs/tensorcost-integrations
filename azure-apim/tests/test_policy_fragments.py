@@ -137,6 +137,22 @@ class AdmitCall(unittest.TestCase):
         lookup = [e for e in walk(self.root) if e.tag == "cache-lookup-value" and e.get("key") == "tensorcost:fail-mode"][0]
         self.assertEqual(lookup.get("default-value"), "open")
 
+    def test_with_no_cache_the_rendered_fail_mode_applies(self):
+        # Consumption tier: no internal cache, so the lookup may leave the
+        # variable unset or null. Right after it, anything but open/closed is
+        # the rendered mode, and nothing reads the variable before that.
+        children = list(self.root)
+        lookup_at = next(i for i, e in enumerate(children) if e.tag == "cache-lookup-value" and e.get("key") == "tensorcost:fail-mode")
+        fallback = children[lookup_at + 1]
+        self.assertEqual((fallback.tag, fallback.get("name")), ("set-variable", "tcLastFailMode"))
+        self.assertIn('GetValueOrDefault<string>("tcLastFailMode", "")', fallback.get("value"))
+        self.assertIn('m == "open" || m == "closed" ? m : "open"', fallback.get("value"))
+
+    def test_the_header_says_consumption_needs_a_reimport(self):
+        text = ADMIT.read_text()
+        self.assertIn("Consumption tier has no internal cache", text)
+        self.assertIn("render and import this fragment", text)
+
 
 class Decisions(unittest.TestCase):
     def setUp(self):

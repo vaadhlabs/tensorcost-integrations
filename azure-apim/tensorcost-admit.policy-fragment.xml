@@ -6,6 +6,10 @@
   and tensorcost-on-error in on-error. It needs the named value
   tensorcost-gateway-key (secret) holding the gateway connection's key.
   Fail mode when TensorCost can't answer: open.
+  The fragment remembers a newer mode TensorCost sends in APIM's cache. The
+  Consumption tier has no internal cache, so there this rendered mode always
+  applies: after changing the fail mode, render and import this fragment
+  again, or configure an external cache for the instance.
   Apache-2.0. See README.md.
 -->
 <fragment>
@@ -23,6 +27,8 @@
 	<set-variable name="tcCustomer" value='@(context.Request.Headers.GetValueOrDefault("x-tc-customer", "").Trim())' />
 	<set-variable name="tcCacheKey" value='@("tensorcost:allow:" + (context.Subscription?.Id ?? "") + "|" + (context.User?.Id ?? "") + "|" + (context.Product?.Id ?? "") + "|" + ((string)context.Variables["tcModel"]) + "|" + ((string)context.Variables["tcMaxTokens"]) + "|" + ((string)context.Variables["tcCustomer"]))' />
 	<cache-lookup-value key="tensorcost:fail-mode" variable-name="tcLastFailMode" default-value="open" />
+	<!-- With no cache to read (Consumption tier, or a failed cache call) the lookup can leave nothing or null: the rendered mode applies. -->
+	<set-variable name="tcLastFailMode" value='@{ var m = context.Variables.GetValueOrDefault&lt;string&gt;("tcLastFailMode", ""); return m == "open" || m == "closed" ? m : "open"; }' />
 	<cache-lookup-value key='@(((string)context.Variables["tcCacheKey"]))' variable-name="tcCachedAllow" />
 	<choose>
 		<when condition='@(!context.Variables.ContainsKey("tcCachedAllow"))'>
