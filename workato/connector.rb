@@ -427,7 +427,11 @@
           { name: "spent_cents", type: "number" },
           { name: "crossed_at", type: "date_time" },
           { name: "scope", type: "object", properties: [
-            { name: "team" }, { name: "developer" }, { name: "provider" }
+            { name: "team" }, { name: "developer" }, { name: "provider" },
+            # What an agent, project, model, environment, tag or custom budget
+            # covers, keyed by its dimension (TensorCost 2026-11-21 and later).
+            { name: "agent" }, { name: "project" }, { name: "model" },
+            { name: "environment" }, { name: "tag" }, { name: "instance_family" }, { name: "custom" }
           ] }
         ]
       end,
