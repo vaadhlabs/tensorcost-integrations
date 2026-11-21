@@ -83,7 +83,8 @@ def test_allow_passes_the_request_through_and_sends_what_the_contract_reads(serv
     assert hit["headers"]["user-agent"] == "TensorCost-LiteLLM/0.1.0"
     body = hit["body"]
     assert body["correlation_id"] == stamped
-    assert body["model"] == "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    assert body["model"] == "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    assert body["provider"] == "bedrock"
     assert body["provider"] == "bedrock"
     assert body["accepts_models"] == ["claude-sonnet", "claude-haiku", "gpt-4o"]
     assert body["max_tokens"] == 512
@@ -556,3 +557,30 @@ def test_an_admit_429_says_the_key_is_unknown(server, caplog):
         run(guard(server, fail_mode="open").async_pre_call_hook(Key(), None, request(), "completion"))
     assert any("throttled this key as unknown" in r.getMessage() for r in caplog.records)
 
+
+
+def test_model_info_drops_the_provider_routing_prefix():
+    from tensorcost_litellm.guardrail import model_info_from_list
+
+    names, deployments = model_info_from_list(
+        [
+            {"model_name": "gpt-4.1-mini", "litellm_params": {"model": "openai/gpt-4.1-mini"}},
+            {"model_name": "haiku", "litellm_params": {"model": "bedrock/anthropic.claude-3-haiku", "custom_llm_provider": "bedrock"}},
+            {"model_name": "plain", "litellm_params": {"model": "gpt-4o"}},
+        ]
+    )
+    assert deployments["gpt-4.1-mini"] == ("gpt-4.1-mini", "openai")
+    assert deployments["haiku"] == ("anthropic.claude-3-haiku", "bedrock")
+    assert deployments["plain"] == ("gpt-4o", None)
+
+
+def test_a_policy_refusal_is_403_and_a_budget_refusal_stays_429():
+    from tensorcost_litellm.guardrail import _refusal
+
+    gov = _refusal({"reason": "model_governance_denied", "message": "not approved", "decision_id": "d1"})
+    assert gov.status_code == 403
+    assert gov.detail["error"]["type"] == "permission_denied"
+    assert gov.detail["error"]["decision_id"] == "d1"
+    budget = _refusal({"reason": "budget_hard_cap", "message": "cap reached"})
+    assert budget.status_code == 429
+    assert budget.detail["error"]["type"] == "budget_exceeded"
