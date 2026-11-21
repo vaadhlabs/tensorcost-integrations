@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+
+from tensorcost_litellm._shared import VERSION
 import json
 import time
 import uuid
@@ -223,7 +225,7 @@ def test_pushes_go_to_the_litellm_format_with_the_key(server):
     [hit] = server.hits("/v1/gateway/logs")
     assert hit["query"] == "/v1/gateway/logs?format=litellm"
     assert hit["headers"]["authorization"] == "Bearer tcgw_test"
-    assert hit["headers"]["user-agent"] == "TensorCost-LiteLLM/0.1.0"
+    assert hit["headers"]["user-agent"] == f"TensorCost-LiteLLM/{VERSION}"
     assert isinstance(hit["body"], list) and len(hit["body"]) == 3
 
 
