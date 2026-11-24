@@ -479,6 +479,37 @@ components:
             consumer (Kong); tag (any). Mapped to a TensorCost team or
             developer through the workspace's caller aliases.
         id: { type: string, maxLength: 256 }
+    GatewayAcceptedModel:
+      type: object
+      required: [name]
+      description: >-
+        A model the gateway serves under a name of its own, such as a LiteLLM
+        model_name alias. A reroute to it is answered with the name.
+      properties:
+        name:
+          type: string
+          maxLength: 256
+          description: What the gateway is told to run on a reroute ("azure-gpt-5.4-mini").
+        model:
+          type: string
+          maxLength: 256
+          description: >-
+            The provider's own model id the name runs ("gpt-5.4-mini"). A
+            routing prefix naming the provider ("azure/gpt-5.4-mini") is
+            dropped. Left out, the entry is matched as a bare name.
+        provider:
+          type: string
+          maxLength: 64
+          description: >-
+            The provider the name runs under, as the gateway names it (azure,
+            bedrock, openai). A route that stays with the call's provider
+            reroutes only to a deployment under that same provider.
+        deployment:
+          type: string
+          maxLength: 256
+          description: >-
+            The deployment's own name, when model is the base model it bills
+            as ("prod-mini-deploy" behind gpt-4o-mini). Informational.
     GatewayAdmitRequest:
       type: object
       required: [model]
@@ -508,7 +539,21 @@ components:
             gcp.vertex_ai, gcp.gemini), LiteLLM's (bedrock, azure, vertex_ai)
             or TensorCost's. An unknown name skips provider budgets and model
             governance; every other budget still applies.
-        model: { type: string, maxLength: 256 }
+        model:
+          type: string
+          maxLength: 256
+          description: >-
+            The model the call bills as. For a deployment with a name of its
+            own (an Azure deployment "prod-mini-deploy"), the model behind it
+            (gpt-4o-mini, LiteLLM's base_model), so the call is priced,
+            budgeted, governed and routed as that model.
+        deployment:
+          type: string
+          maxLength: 256
+          description: >-
+            The deployment's own name, when it differs from model. A
+            governance approval made under this name still lets the call
+            through; nothing else reads it.
         max_tokens:
           type: integer
           minimum: 0
@@ -529,9 +574,17 @@ components:
         stream: { type: boolean }
         accepts_models:
           type: array
-          maxItems: 32
-          items: { type: string }
-          description: Models the gateway may switch the call to on a reroute.
+          items:
+            oneOf:
+              - type: string
+              - $ref: "#/components/schemas/GatewayAcceptedModel"
+          description: >-
+            Models the gateway may switch the call to on a reroute, each a bare
+            name or a GatewayAcceptedModel. A described entry is matched on its
+            model and provider, so the name can be any alias the gateway serves;
+            a bare name is matched by its spelling. Both shapes may be mixed,
+            and a name sent both ways is kept once, described. TensorCost keeps
+            the first 32 names.
         can_reroute:
           type: boolean
           description: >-
@@ -582,7 +635,8 @@ components:
           type: string
           description: >-
             Reroute only. The model to send the call to, spelled as the gateway
-            listed it (accepts_models or the connection's models). A reroute is
+            listed it: a described accepts_models entry's name, or a bare name
+            from accepts_models or the connection's models. A reroute is
             answered only to LiteLLM, Azure APIM and Apigee connections, only for
             a routing policy live by the same rules as the proxy's own routing,
             and only when the budget check is a clean allow: a refusal is never
@@ -705,6 +759,17 @@ components:
             TensorCost couldn't finish its own check (or read the request, or
             the workspace's fail mode) and the allow is the open fail mode's.
             `detail` says what was missing.
+        would_refuse:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: >-
+            Allow only. The budgets that would have refused this call had the
+            workspace held gateway enforcement (`feature.enforce_gateway`,
+            the V6 vertical): budgets warn on every plan and refuse only at an
+            enforcement point the workspace holds. The call runs and nothing
+            is held for it. Absent when nothing would refuse.
         cache_ttl_seconds:
           type: integer
           description: >-
