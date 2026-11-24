@@ -84,6 +84,7 @@ from ._shared import (
     request_customer,
     resolve_setting,
     text,
+    without_provider_prefix,
 )
 
 log = logging.getLogger("tensorcost_litellm")
@@ -547,6 +548,10 @@ def _billed_model(kwargs: dict, logged: Optional[str]) -> Tuple[Optional[str], O
     model, as the guardrail sent it to admit and as LiteLLM priced the call;
     it keeps the deployment's routing prefix ("azure/gpt-4o-mini"), so the
     row's provider reads as before. Without one the row is as it always was.
+
+    The deployment goes without LiteLLM's prefix ("prod-mini-deploy"), the
+    name the Azure portal shows and the guardrail sends to admit. Not the
+    model_name alias: that is the row's model_group.
     """
     billed = base_model(kwargs.get("litellm_params"))
     if not billed or not logged:
@@ -555,7 +560,9 @@ def _billed_model(kwargs: dict, logged: Optional[str]) -> Tuple[Optional[str], O
     if prefix and "/" not in billed:
         billed = f"{prefix}/{billed}"
     billed = text(billed) or logged
-    return (billed, logged) if billed != logged else (logged, None)
+    if billed == logged:
+        return logged, None
+    return billed, without_provider_prefix(logged, prefix)
 
 
 def _without_correlation(row: Dict[str, Any]) -> Dict[str, Any]:

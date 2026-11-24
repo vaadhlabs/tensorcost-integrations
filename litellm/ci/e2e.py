@@ -111,7 +111,8 @@ def main(proxy: str, stub: str) -> None:
     assert named_rows, "the logger pushed no spend row for the named-deployment call within 30 s"
     # LiteLLM's router hands the deployment's model_info to the callback: the row bills as the base model.
     assert named_rows[0].get("model") == "openai/gpt-4o-mini", named_rows[0]
-    assert named_rows[0].get("deployment") == "openai/ci-named-deploy", named_rows[0]
+    # The deployment's own name, without LiteLLM's provider prefix, as admit got it.
+    assert named_rows[0].get("deployment") == "ci-named-deploy", named_rows[0]
     print(f"ok: {len(admits)} checks, {len(rows)} spend rows, the reroute ran as {moved[0]['model']}, the named deployment as {named_rows[0]['model']}")
 
 

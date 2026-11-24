@@ -251,7 +251,9 @@ both are set; the guardrail and the logger read it the same way. With it set,
 the call goes to admit as `gpt-4o-mini` (priced, budgeted, governed and
 routed as that model), its spend row's model is `azure/gpt-4o-mini`, and the
 deployment's own name goes beside it as `deployment` in both, so it still
-shows on the row. A model approved in TensorCost under the deployment's name
+shows on the row. That is the name as Azure shows it, `prod-mini-deploy`,
+without LiteLLM's `azure/` prefix; the `model_name` alias is the row's
+`model_group`. A model approved in TensorCost under the deployment's name
 before you set `base_model` stays approved. A budget scoped to the deployment's
 name doesn't follow: scope it to the model instead. Without `base_model`
 nothing changes, and the call is checked and recorded under the deployment's

@@ -786,6 +786,21 @@ def test_a_deployments_base_model_is_its_model_and_its_name_goes_beside_it():
     assert deployments["chat-bare-base"] == ("gpt-4.1-nano", "azure", "prod-nano")
 
 
+def test_a_deployment_name_never_carries_the_provider_prefix():
+    # v0.1.61: the spend row read "azure/support-bot"; admit and the row both name "support-bot".
+    _, deployments = model_info_from_list(
+        [
+            {
+                "model_name": "support",
+                "litellm_params": {"model": "azure/support-bot", "custom_llm_provider": "azure", "base_model": "azure/gpt-4o-mini"},
+            },
+            {"model_name": "plain-name", "litellm_params": {"model": "support-bot", "custom_llm_provider": "azure", "base_model": "gpt-4o-mini"}},
+        ]
+    )
+    assert deployments["support"] == ("gpt-4o-mini", "azure", "support-bot")
+    assert deployments["plain-name"] == ("gpt-4o-mini", "azure", "support-bot")
+
+
 def test_admit_checks_the_base_model_and_names_the_deployment(server):
     server.on("/v1/gateway/admit", allow())
     g = guard(server, model_info=lambda: model_info_from_list(NAMED_AZURE))

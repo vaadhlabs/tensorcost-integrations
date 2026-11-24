@@ -700,8 +700,19 @@ def test_a_deployments_base_model_is_the_rows_model_and_its_name_goes_beside_it(
     kw["litellm_params"] = params
     row = spend_row(kw, Response(), START, END, failed=False)
     assert row["model"] == "azure/gpt-4o-mini"
-    assert row["deployment"] == "azure/prod-mini-deploy"
+    # The Azure deployment's own name, without LiteLLM's prefix: what the guardrail sends to admit.
+    assert row["deployment"] == "prod-mini-deploy"
     assert row["model_group"] == "chat-mini"
+
+
+def test_a_deployment_without_a_prefix_keeps_its_name():
+    # A model_list entry can name the provider in custom_llm_provider instead of the model string.
+    kw = kwargs_for(payload(model="support-bot", model_group="support", api_base="https://acme.openai.azure.com"))
+    kw["litellm_params"] = {"metadata": {"model_info": {"base_model": "azure/gpt-4o-mini"}}}
+    row = spend_row(kw, Response(), START, END, failed=False)
+    assert row["model"] == "azure/gpt-4o-mini"
+    assert row["deployment"] == "support-bot"
+    assert row["model_group"] == "support"
 
 
 def test_without_base_model_the_row_is_as_before():

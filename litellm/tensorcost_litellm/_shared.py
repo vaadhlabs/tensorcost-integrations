@@ -31,7 +31,7 @@ APPLICATION_METADATA_KEY = "tensorcost_application"
 MAX_APPLICATION = 256
 
 #: The plugin's version, which every request to TensorCost names in its User-Agent.
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 USER_AGENT = f"TensorCost-LiteLLM/{VERSION}"
 
 URL_ENV = "TENSORCOST_URL"
