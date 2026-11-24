@@ -586,3 +586,87 @@ def test_a_policy_refusal_is_403_and_a_budget_refusal_stays_429():
     budget = _refusal({"reason": "budget_hard_cap", "message": "cap reached"})
     assert budget.status_code == 429
     assert budget.detail["error"]["type"] == "budget_exceeded"
+
+
+# A model_list alias is the caller's name for a deployment, never the model
+# of record: customers name them anything ("azure-gpt-5.4", "prod-chat").
+ALIAS_LIST = [
+    {"model_name": "azure-gpt-5.4", "litellm_params": {"model": "azure/gpt-5.4", "api_base": "https://acme.openai.azure.com"}},
+    {"model_name": "cheap", "litellm_params": {"model": "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0"}},
+    {"model_name": "gpt-4.1-mini", "litellm_params": {"model": "openai/gpt-4.1-mini"}},
+    {"model_name": "bare"},
+]
+
+
+def test_an_alias_resolves_to_its_deployments_model_and_provider():
+    names, deployments = model_info_from_list(ALIAS_LIST)
+    assert names == ["azure-gpt-5.4", "cheap", "gpt-4.1-mini", "bare"]
+    assert deployments["azure-gpt-5.4"] == ("gpt-5.4", "azure")
+    assert deployments["cheap"] == ("us.anthropic.claude-haiku-4-5-20251001-v1:0", "bedrock")
+    # An alias equal to the model resolves to the same model.
+    assert deployments["gpt-4.1-mini"] == ("gpt-4.1-mini", "openai")
+    # No litellm_params: nothing to resolve, and no crash.
+    assert deployments["bare"] == (None, None)
+
+
+def test_admit_names_the_deployment_not_the_alias(server):
+    server.on("/v1/gateway/admit", allow())
+    g = guard(server, model_info=lambda: model_info_from_list(ALIAS_LIST))
+    for alias, model, provider in (
+        ("azure-gpt-5.4", "gpt-5.4", "azure"),
+        ("cheap", "us.anthropic.claude-haiku-4-5-20251001-v1:0", "bedrock"),
+    ):
+        data = request(model=alias)
+        run(g.async_pre_call_hook(Key(), None, data, "completion"))
+        # The request LiteLLM routes keeps the alias.
+        assert data["model"] == alias
+        body = server.hits("/v1/gateway/admit")[-1]["body"]
+        assert (body["model"], body["provider"]) == (model, provider)
+
+
+def test_a_name_no_deployment_has_goes_as_asked_with_no_provider(server):
+    # LiteLLM will answer this call 400 itself; admit gets no guessed provider.
+    server.on("/v1/gateway/admit", allow())
+    g = guard(server, model_info=lambda: model_info_from_list(ALIAS_LIST))
+    run(g.async_pre_call_hook(Key(), None, request(model="not-configured"), "completion"))
+    body = server.hits("/v1/gateway/admit")[-1]["body"]
+    assert body["model"] == "not-configured"
+    assert "provider" not in body
+
+
+class KeyNoTeam:
+    team_id = None
+    user_id = None
+    key_alias = "billing-svc"
+    end_user_id = None
+
+
+def _admit_application(server, data, key=None):
+    server.on("/v1/gateway/admit", allow())
+    run(guard(server).async_pre_call_hook(key or Key(), None, data, "completion"))
+    return server.hits("/v1/gateway/admit")[-1]["body"].get("application")
+
+
+def test_the_application_goes_to_admit_by_its_order_of_precedence(server):
+    header = {"proxy_server_request": {"headers": {"X-TC-Application": "support-bot"}}}
+    meta = {"tensorcost_application": "from-metadata", "requester_metadata": {"tags": ["application=from-tag"]}}
+    # The header first, over metadata and tags.
+    assert _admit_application(server, request(metadata=dict(meta), **header)) == "support-bot"
+    # Then the request metadata, or the caller's own copy of it.
+    assert _admit_application(server, request(metadata=dict(meta))) == "from-metadata"
+    assert _admit_application(server, request(metadata={"requester_metadata": {"tensorcost_application": "mine"}})) == "mine"
+    # Then an application= or app: tag.
+    assert _admit_application(server, request(metadata={"requester_metadata": {"tags": ["feature=x", "app:search"]}})) == "search"
+    # Then LiteLLM's end user (the body's user), then the key's alias.
+    assert _admit_application(server, request(metadata={}, user="checkout"), KeyNoTeam()) == "checkout"
+    assert _admit_application(server, request(metadata={}), KeyNoTeam()) == "billing-svc"
+    # A header with a control character in it is no name.
+    assert _admit_application(server, request(metadata={}, proxy_server_request={"headers": {"x-tc-application": "a\nb"}}), KeyNoTeam()) == "billing-svc"
+
+
+def test_an_allow_for_one_application_is_never_reused_for_another(server):
+    server.on("/v1/gateway/admit", allow(ttl=30, reservation_cents=0))
+    g = guard(server)
+    for app in ("a", "b", "a"):
+        run(g.async_pre_call_hook(Key(), None, request(proxy_server_request={"headers": {"x-tc-application": app}}), "completion"))
+    assert [h["body"]["application"] for h in server.hits("/v1/gateway/admit")] == ["a", "b"]

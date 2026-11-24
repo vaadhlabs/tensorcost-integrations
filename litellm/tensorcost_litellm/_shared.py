@@ -6,7 +6,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 #: The request-metadata key the guardrail stamps with the call's correlation id.
 #: TensorCost's log parser reads it from each row's metadata.
@@ -20,8 +20,18 @@ CUSTOMER_METADATA_KEY = "tensorcost_customer"
 #: The longest customer id TensorCost keeps; a longer one is left off.
 MAX_CUSTOMER = 128
 
+#: The header an SDK or proxied call names its application with, passed
+#: through LiteLLM by a caller who sets it.
+APPLICATION_HEADER = "x-tc-application"
+#: The request-metadata key a caller names the application under, the
+#: LiteLLM side of x-tc-application. The logger copies the resolved value
+#: into each row's metadata under this key, where TensorCost's parser reads it.
+APPLICATION_METADATA_KEY = "tensorcost_application"
+#: The longest application name the gateway admit API accepts.
+MAX_APPLICATION = 256
+
 #: The plugin's version, which every request to TensorCost names in its User-Agent.
-VERSION = "0.1.1"
+VERSION = "0.1.3"
 USER_AGENT = f"TensorCost-LiteLLM/{VERSION}"
 
 URL_ENV = "TENSORCOST_URL"
@@ -151,6 +161,81 @@ def request_customer(container: Any) -> Optional[str]:
     if value is None or any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
         return None
     return value
+
+
+def request_application(
+    container: Any,
+    tags: Optional[List[Any]] = None,
+    end_user: Any = None,
+    key_alias: Any = None,
+) -> Optional[str]:
+    """The application a call is for, the same way at admit and on its spend row.
+
+    First of: the x-tc-application header the caller sent through LiteLLM;
+    ``tensorcost_application`` in the request's metadata (or the caller's own
+    copy under ``requester_metadata``); an ``application=`` or ``app=`` tag
+    (``:`` works too); LiteLLM's end user (the body's ``user``); the key's
+    alias. The last three are the order TensorCost's parser already used for a
+    row's application, so a row from an older logger reads the same.
+    ``container`` is the request dict at admit, ``litellm_params`` at log time.
+    """
+    for value in (_header(container, APPLICATION_HEADER), _metadata_value(container, APPLICATION_METADATA_KEY)):
+        found = _label(value, MAX_APPLICATION)
+        if found:
+            return found
+    for key in ("application", "app"):
+        for tag in tags or []:
+            if not isinstance(tag, str):
+                continue
+            lower = tag.strip().lower()
+            for sep in ("=", ":"):
+                if lower.startswith(key + sep):
+                    found = _label(tag.strip()[len(key) + 1 :], MAX_APPLICATION)
+                    if found:
+                        return found
+    for value in (end_user, key_alias):
+        found = _label(value, MAX_APPLICATION)
+        if found:
+            return found
+    return None
+
+
+def _header(container: Any, name: str) -> Any:
+    """A request header LiteLLM kept, by name in any case (proxy_server_request, then metadata)."""
+    if not isinstance(container, dict):
+        return None
+    sources = [(container.get("proxy_server_request") or {}).get("headers") if isinstance(container.get("proxy_server_request"), dict) else None]
+    for key in ("litellm_metadata", "metadata"):
+        md = container.get(key)
+        if isinstance(md, dict):
+            sources.append(md.get("headers"))
+    for headers in sources:
+        if isinstance(headers, dict):
+            for k, v in headers.items():
+                if isinstance(k, str) and k.lower() == name:
+                    return v
+    return None
+
+
+def _metadata_value(container: Any, name: str) -> Any:
+    if not isinstance(container, dict):
+        return None
+    for key in ("litellm_metadata", "metadata"):
+        md = container.get(key)
+        if not isinstance(md, dict):
+            continue
+        for source in (md, md.get("requester_metadata")):
+            if isinstance(source, dict) and source.get(name) is not None:
+                return source.get(name)
+    return None
+
+
+def _label(value: Any, limit: int) -> Optional[str]:
+    """text(), and nothing with a control character in it."""
+    found = text(value, limit)
+    if found is None or any(ord(ch) < 32 or ord(ch) == 127 for ch in found):
+        return None
+    return found
 
 
 def auth_headers(key: str) -> Dict[str, str]:

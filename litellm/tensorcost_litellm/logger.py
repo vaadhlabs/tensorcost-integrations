@@ -22,15 +22,33 @@ guardrail minted it, never one a caller put in their own metadata.
 
 A row also carries the provider's response id as ``id``, model, tokens,
 cache tokens, LiteLLM's cost, timing, the team, user and key alias, tags,
-and a failure's error class and code, and the end customer the caller named
-under ``tensorcost_customer`` in the request's metadata. It never carries the
+and a failure's error class and code, the end customer the caller named
+under ``tensorcost_customer`` in the request's metadata, and the application
+the guardrail sent admit (``_shared.request_application``). It never carries the
 prompt, the response, the request parameters or the rest of the caller's own
 metadata.
 
-A batch holds at most 500 rows. A push that fails with a 5xx, a 429 or a
-dropped connection is sent once more. A batch that fails twice is dropped
-and logged. Rows still queued when the proxy exits are sent once, with a
-short timeout, from an exit hook.
+A batch holds at most 500 rows. A push that fails in a way waiting can fix
+(a 5xx, a 408 or 429, a timeout, a refused or dropped connection) loses
+nothing: its rows go back to the front of the queue and the logger waits,
+doubling from ``retry_delay_seconds`` (1 s) up to ``retry_max_delay_seconds``
+(60 s), with jitter, before it tries again. It keeps trying for as long as
+the outage lasts. While it waits, nothing is pushed and LiteLLM's hooks only
+queue. A retried row keeps its ``request_id``, so a batch TensorCost stored
+before its answer was lost is deduped, not counted twice.
+
+A refusal waiting can't fix (any other 4xx: a bad key, a malformed or
+oversized batch) drops that batch and logs it once, with the status and
+TensorCost's message.
+
+The queue is bounded at ``max_queue`` rows (20,000), the batch in flight
+included. When an outage outlasts it, the oldest rows go first, as in
+TensorCost's Python SDK, and each drop is counted in ``dropped`` and logged
+as an error. There is no disk spool: what is queued lives in this process.
+
+When the proxy exits, an exit hook sends what is queued (and the batch that
+was in flight, which dedupe makes safe) once, within a few seconds, and logs
+how many rows it couldn't send.
 """
 
 from __future__ import annotations
@@ -38,17 +56,20 @@ from __future__ import annotations
 import asyncio
 import atexit
 import logging
+import random
 import re
 import time
 import uuid
 import weakref
+from collections import deque
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 import httpx
 from litellm.integrations.custom_logger import CustomLogger
 
 from ._shared import (
+    APPLICATION_METADATA_KEY,
     CORRELATION_METADATA_KEY,
     CUSTOMER_METADATA_KEY,
     KEY_ENV,
@@ -56,6 +77,7 @@ from ._shared import (
     base_url,
     calls,
     non_negative_int,
+    request_application,
     request_customer,
     resolve_setting,
     text,
@@ -69,7 +91,20 @@ DEFAULT_FLUSH_SECONDS = 5.0
 DEFAULT_QUEUE_MAX = 20_000
 PUSH_TIMEOUT_SECONDS = 15.0
 EXIT_PUSH_TIMEOUT_SECONDS = 3.0
-RETRY_DELAY_SECONDS = 0.5
+#: The exit hook stops trying after this long in all, however much is left.
+EXIT_DEADLINE_SECONDS = 5.0
+#: The first wait after a failed push; each failure doubles it, up to the max.
+RETRY_DELAY_SECONDS = 1.0
+RETRY_MAX_DELAY_SECONDS = 60.0
+#: While TensorCost stays down, a failed push is logged at most this often.
+RETRY_LOG_EVERY_SECONDS = 60.0
+#: After the first, one queue-full error per this many dropped rows.
+DROP_LOG_EVERY = 1000
+#: How much of a refusal's body goes in the log.
+REFUSAL_BODY_CHARS = 300
+
+# What one push came to.
+_SENT, _RETRY, _REFUSED = "sent", "retry", "refused"
 #: How long a failed attempt's row waits for the call to succeed or fail for good.
 HOLD_FAILURE_SECONDS = 120.0
 
@@ -81,8 +116,10 @@ _ERROR_FIELDS = (
     "error_provider_request_id",
     "error_rate_limit_category",
 )
-#: The one thing the parser reads from an error message: that a budget was exceeded.
+#: What the parser reads from an error message: that a budget was exceeded,
+#: or that LiteLLM had no deployment for the model the caller asked for.
 _BUDGET_EXCEEDED = re.compile(r"budget (?:has been )?exceeded|exceeded (?:its |the )?budget", re.I)
+_INVALID_MODEL = re.compile(r"invalid model name", re.I)
 
 #: Caller fields of LiteLLM's logging metadata that name who made the call.
 _CALLER_FIELDS = ("user_api_key_team_id", "user_api_key_user_id", "user_api_key_alias", "user_api_key_team_alias")
@@ -99,6 +136,7 @@ class TensorCostSpendLogger(CustomLogger):
         flush_interval_seconds: float = DEFAULT_FLUSH_SECONDS,
         max_queue: int = DEFAULT_QUEUE_MAX,
         retry_delay_seconds: float = RETRY_DELAY_SECONDS,
+        retry_max_delay_seconds: float = RETRY_MAX_DELAY_SECONDS,
         hold_failure_seconds: float = HOLD_FAILURE_SECONDS,
         **kwargs: Any,
     ) -> None:
@@ -107,17 +145,31 @@ class TensorCostSpendLogger(CustomLogger):
         self._api_key_setting = api_key
         self.batch_size = max(1, min(int(batch_size), BATCH_MAX))
         self.flush_interval_seconds = float(flush_interval_seconds)
-        self.max_queue = int(max_queue)
-        self.retry_delay_seconds = float(retry_delay_seconds)
+        self.max_queue = max(1, int(max_queue))
+        self.retry_delay_seconds = max(0.0, float(retry_delay_seconds))
+        self.retry_max_delay_seconds = max(self.retry_delay_seconds, float(retry_max_delay_seconds))
         self.hold_failure_seconds = float(hold_failure_seconds)
-        self._queue: List[Dict[str, Any]] = []
+        self._queue: Deque[Dict[str, Any]] = deque()
+        #: The batch a push has taken off the queue and not yet settled. It
+        #: counts toward max_queue, and the exit hook resends it.
+        self._in_flight: List[Dict[str, Any]] = []
         #: Failure rows waiting for their call to finish, by correlation id: (first seen, rows).
         self._held: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
         self._timer: Optional[asyncio.Task] = None
+        self._kick: Optional[asyncio.Task] = None
         self._flushing: Optional[asyncio.Lock] = None
         self._client: Optional[httpx.AsyncClient] = None
         self._client_loop: Optional[asyncio.AbstractEventLoop] = None
+        #: The clock backoff runs on. Tests swap it for a fake one.
+        self._now: Callable[[], float] = time.monotonic
+        #: Failed pushes in a row, when the current outage began, when the next try may go.
+        self._failures = 0
+        self._outage_since: Optional[float] = None
+        self._retry_at = 0.0
+        self._last_retry_log = 0.0
+        #: Rows dropped because the queue was full, and rows TensorCost refused.
         self.dropped = 0
+        self.refused = 0
         _live_loggers.add(self)
 
     # Settings are read when first used, not at import: LiteLLM imports the
@@ -166,18 +218,41 @@ class TensorCostSpendLogger(CustomLogger):
             for r in earlier:
                 self._enqueue(_without_correlation(r))
             self._enqueue(row)
-        if len(self._queue) >= self.batch_size:
-            await self.flush()
-        elif (self._queue or self._held) and (self._timer is None or self._timer.done()):
+        # The hook only queues. Pushes run on their own task, so a slow or
+        # absent TensorCost never holds up LiteLLM's logging of the call.
+        if len(self._queue) >= self.batch_size and not self._backing_off() and (self._kick is None or self._kick.done()):
+            self._kick = asyncio.ensure_future(self._flush_quietly())
+        if (self._queue or self._held) and (self._timer is None or self._timer.done()):
             self._timer = asyncio.ensure_future(self._flush_later())
 
     def _enqueue(self, row: Dict[str, Any]) -> None:
-        if len(self._queue) >= self.max_queue:
-            self.dropped += 1
-            if self.dropped % 1000 == 1:
-                log.warning("tensorcost: spend queue full, %d rows dropped so far", self.dropped)
+        # The batch in flight counts: if its push fails it comes back.
+        while self._queue and len(self._queue) + len(self._in_flight) >= self.max_queue:
+            self._queue.popleft()
+            self._count_dropped()
+        if len(self._queue) + len(self._in_flight) >= self.max_queue:
+            # Only the batch in flight is left, and it fills the bound by itself.
+            self._count_dropped()
             return
         self._queue.append(row)
+
+    def _count_dropped(self) -> None:
+        self.dropped += 1
+        if self.dropped % DROP_LOG_EVERY == 1:
+            if self._outage_since is not None:
+                down = f"TensorCost unreachable for {self._now() - self._outage_since:.0f}s"
+            else:
+                down = "pushes aren't keeping up with calls"
+            log.error(
+                "tensorcost: spend queue full (%d rows waiting; %s); dropping the oldest rows, "
+                "%d dropped so far. Those calls are missing from TensorCost's spend, budgets and FOCUS export.",
+                self.max_queue,
+                down,
+                self.dropped,
+            )
+
+    def _backing_off(self) -> bool:
+        return self._failures > 0 and self._now() < self._retry_at
 
     def _release_held(self, everything: bool = False) -> None:
         """Failure rows whose call has finished (or waited long enough) go, one of them with the correlation id."""
@@ -199,57 +274,164 @@ class TensorCostSpendLogger(CustomLogger):
             self._enqueue(rows[-1])
 
     async def _flush_later(self) -> None:
-        await asyncio.sleep(self.flush_interval_seconds)
-        await self.flush()
-        if self._queue or self._held:
-            self._timer = asyncio.ensure_future(self._flush_later())
+        """The logger's clock: a flush every interval, or when a backoff ends, while anything is waiting."""
+        while self._queue or self._held:
+            wait = self.flush_interval_seconds
+            if self._failures > 0:
+                wait = max(0.0, self._retry_at - self._now())
+                if self._held:
+                    wait = min(wait, self.flush_interval_seconds)
+            await asyncio.sleep(wait)
+            await self._flush_quietly()
+
+    async def _flush_quietly(self) -> None:
+        # A background flush must never end the task with an exception nobody reads.
+        try:
+            await self.flush()
+        except Exception as err:  # pragma: no cover - a bug, not an outage
+            log.error("tensorcost: spend flush failed: %s: %s", type(err).__name__, err)
 
     async def flush(self, everything: bool = False) -> None:
-        """Push everything queued, a batch at a time, and any held rows whose call is done."""
+        """Push what is queued, a batch at a time, and any held rows whose call is done.
+
+        While a backoff runs this pushes nothing: the timer comes back when it ends.
+        """
         if self._flushing is None:
             self._flushing = asyncio.Lock()
         async with self._flushing:
             self._release_held(everything)
-            while self._queue:
-                batch = self._queue[: self.batch_size]
-                del self._queue[: self.batch_size]
-                await self._push(batch)
+            while self._queue and not self._backing_off():
+                n = min(self.batch_size, len(self._queue))
+                self._in_flight = [self._queue.popleft() for _ in range(n)]
+                try:
+                    outcome = await self._push(self._in_flight)
+                except BaseException:
+                    # Cancelled (the loop is shutting down) or a bug: the rows
+                    # go back, and the exit hook still has them.
+                    batch, self._in_flight = self._in_flight, []
+                    self._queue.extendleft(reversed(batch))
+                    raise
+                batch, self._in_flight = self._in_flight, []
+                if outcome == _RETRY:
+                    # Back at the front, in order, with the same request ids.
+                    self._queue.extendleft(reversed(batch))
+                    return
 
     def flush_at_exit(self) -> None:
-        """Send what is left, once, synchronously: the event loop may be gone by now."""
+        """Send what is left, once, synchronously and within a few seconds: the event loop may be gone by now."""
         self._release_held(everything=True)
-        if not self._queue or not self.api_base or not self.api_key:
+        # A batch in flight when the loop stopped may or may not have landed; dedupe makes a resend safe.
+        rows = self._in_flight + list(self._queue)
+        self._in_flight, self._queue = [], deque()
+        if not rows:
+            return
+        if not self.api_base or not self.api_key:
+            log.error("tensorcost: TENSORCOST_URL or TENSORCOST_GATEWAY_KEY isn't set; %d spend rows not sent at exit", len(rows))
             return
         url = f"{self.api_base}/v1/gateway/logs?format=litellm"
-        rows, self._queue = self._queue, []
+        deadline = time.monotonic() + EXIT_DEADLINE_SECONDS
+        sent = 0
+        why = ""
         try:
             with httpx.Client(timeout=EXIT_PUSH_TIMEOUT_SECONDS) as client:
                 for i in range(0, len(rows), self.batch_size):
-                    client.post(url, json=rows[i : i + self.batch_size], headers=auth_headers(self.api_key))
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        why = f"out of time after {EXIT_DEADLINE_SECONDS:.0f}s"
+                        break
+                    batch = rows[i : i + self.batch_size]
+                    res = client.post(url, json=batch, headers=auth_headers(self.api_key), timeout=min(EXIT_PUSH_TIMEOUT_SECONDS, left))
+                    if res.status_code >= 300:
+                        # Down or refusing: the next batch would get the same answer.
+                        why = f"TensorCost answered {res.status_code}"
+                        break
+                    sent += len(batch)
         except Exception as err:
-            log.warning("tensorcost: couldn't send all of %d spend rows at exit: %s", len(rows), type(err).__name__)
+            why = type(err).__name__
+        if sent < len(rows):
+            log.error(
+                "tensorcost: %d of %d spend rows not sent at exit (%s); those calls are missing from TensorCost",
+                len(rows) - sent,
+                len(rows),
+                why,
+            )
 
-    async def _push(self, batch: List[Dict[str, Any]]) -> None:
+    async def _push(self, batch: List[Dict[str, Any]]) -> str:
+        """One attempt. Settles the batch as sent, refused (dropped, logged once) or to retry (backoff set)."""
         if not self.api_base or not self.api_key:
-            log.warning("tensorcost: TENSORCOST_URL or TENSORCOST_GATEWAY_KEY isn't set; %d spend rows not sent", len(batch))
-            return
+            log.error("tensorcost: TENSORCOST_URL or TENSORCOST_GATEWAY_KEY isn't set; %d spend rows dropped", len(batch))
+            return _REFUSED
         url = f"{self.api_base}/v1/gateway/logs?format=litellm"
-        for attempt in (1, 2):
-            try:
-                res = await self._http().post(url, json=batch, headers=auth_headers(self.api_key), timeout=PUSH_TIMEOUT_SECONDS)
-            except httpx.HTTPError as err:
-                why = type(err).__name__
-            else:
-                if res.status_code < 300:
-                    return
-                if res.status_code < 500 and res.status_code != 429:
-                    # TensorCost refused the batch itself; sending it again won't change that.
-                    log.warning("tensorcost: spend push refused (%d); %d rows dropped", res.status_code, len(batch))
-                    return
-                why = f"TensorCost answered {res.status_code}"
-            if attempt == 1:
-                await asyncio.sleep(self.retry_delay_seconds)
-        log.warning("tensorcost: spend push failed twice (%s); %d rows dropped", why, len(batch))
+        retry_after: Optional[float] = None
+        try:
+            res = await self._http().post(url, json=batch, headers=auth_headers(self.api_key), timeout=PUSH_TIMEOUT_SECONDS)
+        except httpx.HTTPError as err:
+            # Connect refused, timeouts, a dropped connection: TensorCost is unreachable.
+            why = type(err).__name__
+        except Exception as err:
+            # Not the network. Retrying the same rows would fail the same way.
+            log.error("tensorcost: couldn't send %d spend rows (%s: %s); dropped", len(batch), type(err).__name__, err)
+            self.refused += len(batch)
+            return _REFUSED
+        else:
+            if res.status_code < 300:
+                self._recovered()
+                return _SENT
+            if res.status_code < 500 and res.status_code not in (408, 429):
+                self._refusal(res, len(batch))
+                return _REFUSED
+            why = f"TensorCost answered {res.status_code}"
+            retry_after = _retry_after_seconds(res.headers.get("retry-after"))
+        self._failed(why, len(batch), retry_after)
+        return _RETRY
+
+    def _failed(self, why: str, n: int, retry_after: Optional[float]) -> None:
+        now = self._now()
+        self._failures += 1
+        if self._outage_since is None:
+            self._outage_since = now
+        delay = backoff_delay(self._failures, self.retry_delay_seconds, self.retry_max_delay_seconds)
+        if retry_after is not None:
+            delay = min(max(delay, retry_after), self.retry_max_delay_seconds)
+        self._retry_at = now + delay
+        if self._failures == 1 or now - self._last_retry_log >= RETRY_LOG_EVERY_SECONDS:
+            self._last_retry_log = now
+            log.warning(
+                "tensorcost: spend push failed (%s); %d rows kept, %d queued in all; try %d, next in %.1fs, failing for %.0fs",
+                why,
+                n,
+                len(self._queue) + n,
+                self._failures,
+                delay,
+                now - self._outage_since,
+            )
+
+    def _recovered(self) -> None:
+        if self._failures == 0:
+            return
+        log.warning(
+            "tensorcost: spend push delivered after %d failed tries over %.0fs; %d rows still queued, sending now",
+            self._failures,
+            self._now() - (self._outage_since or self._now()),
+            len(self._queue),
+        )
+        self._failures = 0
+        self._outage_since = None
+        self._retry_at = 0.0
+
+    def _refusal(self, res: httpx.Response, n: int) -> None:
+        # TensorCost refused the batch itself; sending it again won't change that.
+        self.refused += n
+        hint = {
+            401: "check TENSORCOST_GATEWAY_KEY: TensorCost doesn't know this key",
+            403: "check TENSORCOST_GATEWAY_KEY: the key's connection may not push logs",
+            413: "the batch is larger than TensorCost takes",
+        }.get(res.status_code, "TensorCost couldn't read the batch")
+        try:
+            body = res.text[:REFUSAL_BODY_CHARS]
+        except Exception:  # pragma: no cover
+            body = ""
+        log.error("tensorcost: spend push refused (%d, %s); %d rows dropped. TensorCost said: %s", res.status_code, hint, n, body or "(nothing)")
 
     def _http(self) -> httpx.AsyncClient:
         loop = asyncio.get_running_loop()
@@ -263,6 +445,25 @@ class TensorCostSpendLogger(CustomLogger):
 def _flush_all_at_exit() -> None:
     for lg in list(_live_loggers):
         lg.flush_at_exit()
+
+
+def backoff_delay(failures: int, base: float, cap: float) -> float:
+    """The wait after the n-th failed push in a row: base doubled per failure, capped, jittered to 50–100%.
+
+    The same shape as TensorCost's Python SDK, so many proxies coming back
+    from one outage don't all push in the same second.
+    """
+    capped = min(cap, base * (2 ** min(max(failures, 1) - 1, 30)))
+    return capped * (0.5 + random.random() * 0.5)
+
+
+def _retry_after_seconds(value: Optional[str]) -> Optional[float]:
+    """A Retry-After given in seconds. A date, or anything else, is ignored."""
+    try:
+        seconds = float(value) if value else None
+    except ValueError:
+        return None
+    return seconds if seconds is not None and seconds >= 0 else None
 
 
 # ------------------------------------------------------------ the row shape
@@ -293,6 +494,11 @@ def spend_row(kwargs: dict, response_obj: Any, start_time: Any, end_time: Any, f
     customer = request_customer(kwargs.get("litellm_params")) or request_customer({"metadata": md})
     if customer:
         metadata[CUSTOMER_METADATA_KEY] = customer
+    # The application, resolved as the guardrail resolved it for admit.
+    tags = slp.get("request_tags") if isinstance(slp.get("request_tags"), list) else None
+    application = request_application(kwargs.get("litellm_params"), tags, slp.get("end_user"), md.get("user_api_key_alias"))
+    if application:
+        metadata[APPLICATION_METADATA_KEY] = application
 
     row: Dict[str, Any] = {
         # Minted here, once per logged event: the dedupe key no caller can set.
@@ -357,10 +563,15 @@ def _error_information(info: Any) -> Optional[Dict[str, Any]]:
         if isinstance(value, (int, str)) and not isinstance(value, bool) and str(value).strip():
             out[field] = value
     message = info.get("error_message")
-    # Never the message itself, which can quote the request: only that a
-    # budget was exceeded, the one thing TensorCost reads from it.
+    # Never the message itself, which can quote the request: only a fixed
+    # text for the two things TensorCost reads from it. A model LiteLLM
+    # couldn't resolve ("Invalid model name passed in model=prod-chat") never
+    # reached a provider, and TensorCost reads the row as LiteLLM's own
+    # refusal rather than spend on a model named after the caller's alias.
     if isinstance(message, str) and _BUDGET_EXCEEDED.search(message):
         out["error_message"] = "budget exceeded"
+    elif isinstance(message, str) and _INVALID_MODEL.search(message):
+        out["error_message"] = "invalid model name"
     return out or None
 
 

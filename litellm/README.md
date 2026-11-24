@@ -75,9 +75,9 @@ Guardrail settings, all optional:
 
 The call's callers (the key's team id, user id and key alias, and any
 request tags), the model and its provider as the proxy's `model_list` names
-them, `max_tokens` (or `max_completion_tokens`), the prompt's token count,
-whether it streams, and the model names in `model_list` as the models a
-reroute may pick. It never sends the prompt.
+them, the application (below), `max_tokens` (or `max_completion_tokens`),
+the prompt's token count, whether it streams, and the model names in
+`model_list` as the models a reroute may pick. It never sends the prompt.
 
 It also mints a correlation id for the call, puts it in the request's
 metadata under `tensorcost_correlation_id` (over any value the caller sent),
@@ -108,6 +108,33 @@ If your app also goes through the TensorCost SDK with LiteLLM as its base
 URL, send the customer here too: TensorCost counts that call once, from
 LiteLLM's row, and a LiteLLM row with no customer leaves the call off the
 customer's figures.
+
+### The application
+
+A routing policy can be scoped to an application. The check sends the call's
+application as `application`, the first of:
+
+1. an `x-tc-application` header the caller sent (the header the SDK and
+   TensorCost's proxy use);
+2. `tensorcost_application` in the request's metadata;
+3. an `application=` or `app=` tag (`application:` and `app:` work too);
+4. LiteLLM's end user (the request body's `user`);
+5. the key's alias.
+
+```python
+client.chat.completions.create(
+    model="claude-sonnet",
+    messages=[...],
+    extra_headers={"x-tc-application": "support-bot"},
+)
+```
+
+The logger works it out the same way from the same request and puts it on
+the call's spend row (`metadata.tensorcost_application`), so the row's
+application is the one the check was matched on. The last three steps are the
+order TensorCost already read a LiteLLM row's application in. It is trimmed
+and at most 256 characters; a longer one, or one with control characters, is
+skipped for the next. A cached allow is kept per application.
 
 ## Decisions
 
@@ -185,7 +212,16 @@ start and end time, team, user, key alias, end user, tags, and for a failed
 call the error's class and code, and the end customer the request named under
 `tensorcost_customer`. It never sends the prompt, the response, the request's
 parameters, the rest of the caller's own metadata or an error's message (only
-whether it says a budget was exceeded).
+whether it says a budget was exceeded, or that LiteLLM had no model by the
+name asked for).
+
+The model is the deployment LiteLLM's router picked (`azure/gpt-5.4` for a
+`model_name: azure-gpt-5.4` entry), and the name the caller asked for goes
+beside it as `model_group`. TensorCost reads the provider from the
+deployment's prefix and api base, so a `model_list` alias such as `prod-chat`
+or `cheap` is never a model of record. A call LiteLLM couldn't resolve (its
+400 "Invalid model name passed in") reached no provider: TensorCost reads its
+row as LiteLLM's own refusal, not as spend, and releases the call's hold.
 
 `request_id`, which TensorCost dedupes on, is a UUID the logger mints for
 each logged event. It isn't LiteLLM's call id, which a client can set; one
@@ -200,11 +236,32 @@ never on top of the attempt that succeeded. A correlation id the guardrail
 didn't mint in this process is never sent.
 
 Rows go in batches of at most 500, every 5 seconds or sooner when a batch
-fills. A push that fails with a 5xx, a 429 or a dropped connection is sent
-once more with the same ids, so a resend never counts twice. A batch that
-fails twice is dropped and logged. Rows still queued when the proxy exits
-are sent once from an exit hook, with a three-second timeout; a proxy that
-is killed outright loses them.
+fills. Pushes run on the logger's own task, so LiteLLM's calls never wait
+for TensorCost.
+
+When TensorCost can't take a push (a 5xx, a 408 or 429, a timeout, a
+refused or dropped connection) nothing is dropped. The rows stay queued and
+the logger tries again after about a second, doubling the wait each time up
+to a minute, with jitter, for as long as the outage lasts; a 429's
+`Retry-After` is honoured. Every row keeps its `request_id` across tries,
+so a push that landed before its answer was lost is deduped and counts
+once. The log says when pushes start failing, about once a minute while
+they keep failing, and when they get through again.
+
+A refusal that waiting can't fix (400, 401, 403, 413, 422 and any other 4xx)
+drops that batch and logs one error with the status and TensorCost's
+message: usually a wrong `TENSORCOST_GATEWAY_KEY`.
+
+The queue holds at most 20,000 rows, the batch in flight included: about
+twenty minutes of a busy proxy at a thousand calls a minute. If an outage
+outlasts that, the oldest rows go first and each thousandth drop is logged
+as an error with the running count. Those calls are missing from spend,
+budgets and the FOCUS export. There is no disk spool; the queue lives in
+the proxy's process.
+
+When the proxy exits, an exit hook sends what is queued once, within five
+seconds, and logs how many rows it couldn't send. A proxy that is killed
+outright loses them.
 
 ## Team budgets in LiteLLM
 

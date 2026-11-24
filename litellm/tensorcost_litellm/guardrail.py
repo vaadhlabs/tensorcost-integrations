@@ -42,6 +42,7 @@ from ._shared import (
     base_url,
     calls,
     non_negative_int,
+    request_application,
     request_customer,
     resolve_setting,
     stamped_correlation_id,
@@ -145,6 +146,12 @@ class TensorCostAdmit(CustomGuardrail):
         customer = request_customer(data)
         if customer:
             body["customer"] = customer
+        # What routes scoped to an application match on. The logger puts the
+        # same value on the call's spend row, so the admit and the row agree.
+        end_user = _get(user_api_key_dict, "end_user_id") or data.get("user")
+        application = request_application(data, tags, end_user, _get(user_api_key_dict, "key_alias"))
+        if application:
+            body["application"] = application
         max_tokens = _max_tokens(data)
         if max_tokens is not None:
             body["max_tokens"] = max_tokens
@@ -157,7 +164,7 @@ class TensorCostAdmit(CustomGuardrail):
         # Keyed by callers, model and customer, as TensorCost's TTL is, and by
         # the call's size: an allow for a small call never covers a larger one,
         # and one customer's allow never covers another's.
-        cache_key = (tuple((c["kind"], c["id"]) for c in callers), model, customer, max_tokens, input_tokens)
+        cache_key = (tuple((c["kind"], c["id"]) for c in callers), model, customer, application, max_tokens, input_tokens)
         if self._cached(cache_key):
             # A cached allow: the call runs on another call's decision, so it
             # has none of its own to cancel.

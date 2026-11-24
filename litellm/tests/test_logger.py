@@ -4,6 +4,8 @@ import asyncio
 
 from tensorcost_litellm._shared import VERSION
 import json
+import logging
+import socket
 import time
 import uuid
 from datetime import datetime, timezone
@@ -106,6 +108,8 @@ def test_a_success_row_is_the_spend_log_shape_the_parser_reads():
         "user_api_key_alias": "ci-key",
         "status": "success",
         CORRELATION_METADATA_KEY: "corr-1",
+        # No header, metadata or tag names one: LiteLLM's end user.
+        "tensorcost_application": "support-bot",
     }
 
 
@@ -241,30 +245,188 @@ def test_a_batch_size_above_500_is_held_to_500(server):
     assert logger(server, batch_size=2000).batch_size == 500
 
 
-def test_a_5xx_is_retried_once(server):
-    answers = iter([(503, {}, {}), None])
+@pytest.mark.parametrize("status", [400, 401, 403, 413, 422])
+def test_a_refusal_is_dropped_once_and_logged_with_what_tensorcost_said(server, caplog, status):
+    server.on("/v1/gateway/logs", lambda req: (status, {"message": "format must be litellm, portkey or tensorcost"}, {}))
+    lg = logger(server)
+    caplog.set_level(logging.WARNING, logger="tensorcost_litellm")
+    push_rows(lg, 2)
+    asyncio.run(lg.flush())  # nothing is left to send again
+    assert len(server.hits("/v1/gateway/logs")) == 1
+    assert lg.refused == 2 and not lg._queue and lg._failures == 0
+    [line] = [r for r in caplog.records if "refused" in r.getMessage()]
+    assert line.levelno == logging.ERROR
+    msg = line.getMessage()
+    assert f"({status}," in msg and "2 rows dropped" in msg and "format must be litellm" in msg
+
+
+# ------------------------------------------------- outages: retried until they land
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.t = 1000.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def record_ids(lg):
+    """The request ids of what the logger has queued, oldest first."""
+    return [r["request_id"] for r in lg._queue]
+
+
+@pytest.mark.parametrize("outage_seconds", [120, 15 * 60])
+def test_a_503_outage_loses_no_row_and_counts_each_once(server, outage_seconds):
+    clock = FakeClock()
+    start = clock.t
+    attempts = []  # (fake time, the batch's request ids, answered)
+    delivered = []
+
+    def tensorcost(req):
+        ids = [r["request_id"] for r in req["body"]]
+        if clock() < start + outage_seconds:
+            attempts.append((clock(), ids, 503))
+            return 503, {"message": "TensorCost couldn't store the logs right now."}, {}
+        attempts.append((clock(), ids, 200))
+        delivered.extend(ids)
+        return counts(req)
+
+    server.on("/v1/gateway/logs", tensorcost)
+    lg = logger(server, batch_size=4, retry_delay_seconds=1.0, retry_max_delay_seconds=60.0)
+    lg._now = clock
+    logged = []
+
+    async def call():
+        await lg.async_log_success_event(kwargs_for(payload()), Response(), START, END)
+        logged.append(lg._queue[-1]["request_id"])
+
+    async def go():
+        # 16 calls, as on the install: half when Redis goes, half while it is out.
+        for _ in range(8):
+            await call()
+        await lg.flush()
+        second_half = False
+        while lg._queue:
+            assert clock.t < start + outage_seconds + 600, "still queued ten minutes after TensorCost came back"
+            assert lg._retry_at > clock.t  # waiting out a backoff, not pushing
+            clock.t = lg._retry_at
+            if not second_half and clock.t > start + outage_seconds / 2:
+                second_half = True
+                for _ in range(8):
+                    await call()
+            await lg.flush()
+
+    asyncio.run(go())
+
+    # Every call's row landed, once.
+    assert sorted(delivered) == sorted(logged) and len(logged) == 16
+    assert len(set(delivered)) == 16
+    assert lg.dropped == 0 and lg.refused == 0 and lg._failures == 0
+    # A refused try sent rows under the keys they landed with.
+    assert {i for _, ids, _ in attempts for i in ids} == set(logged)
+    # Backoff: from about a second, doubling, never more than a minute apart.
+    times = [t for t, _, _ in attempts]
+    gaps = [b - a for a, b in zip(times, times[1:]) if b > a]
+    assert 0.5 <= gaps[0] <= 1.0
+    assert max(gaps) <= 60.0
+    failed = [a for a in attempts if a[2] == 503]
+    assert len(failed) <= 8 + outage_seconds / 30  # ~6 tries in the first minute, then one every 30-60 s
+
+
+def test_a_retried_row_keeps_its_request_id(server):
+    answers = iter([503, 502, 429, 200])
+    bodies = []
 
     def flaky(req):
-        a = next(answers)
-        return a if a else counts(req)
+        bodies.append(req["body"])
+        status = next(answers)
+        return counts(req) if status == 200 else (status, {}, {})
 
     server.on("/v1/gateway/logs", flaky)
-    push_rows(logger(server), 2)
-    hits = server.hits("/v1/gateway/logs")
-    assert len(hits) == 2
-    assert hits[0]["body"] == hits[1]["body"]
+    clock = FakeClock()
+    lg = logger(server)
+    lg._now = clock
+
+    async def go():
+        for _ in range(3):
+            await lg.async_log_success_event(kwargs_for(payload()), Response(), START, END)
+        ids = record_ids(lg)
+        while lg._queue:
+            await lg.flush()
+            clock.t = max(clock.t, lg._retry_at)
+        return ids
+
+    ids = asyncio.run(go())
+    assert len(bodies) == 4
+    # The same rows each time: same request ids, same bodies, byte for byte.
+    assert all([r["request_id"] for r in b] == ids for b in bodies)
+    assert all(b == bodies[0] for b in bodies)
 
 
-def test_two_5xx_drop_the_batch_after_one_retry(server):
-    server.on("/v1/gateway/logs", lambda req: (500, {}, {}))
-    push_rows(logger(server), 2)
-    assert len(server.hits("/v1/gateway/logs")) == 2
+def test_a_429_waits_at_least_its_retry_after(server):
+    server.on("/v1/gateway/logs", lambda req: (429, {}, {"retry-after": "30"}))
+    clock = FakeClock()
+    lg = logger(server)
+    lg._now = clock
+    push_rows(lg, 1)
+    assert lg._retry_at - clock.t >= 30
+    assert len(lg._queue) == 1
 
 
-def test_a_4xx_is_not_retried(server):
-    server.on("/v1/gateway/logs", lambda req: (400, {"message": "bad"}, {}))
-    push_rows(logger(server), 2)
-    assert len(server.hits("/v1/gateway/logs")) == 1
+def test_a_refused_connection_keeps_the_rows_until_tensorcost_is_back(server):
+    with socket.socket() as s:  # a port nothing listens on
+        s.bind(("127.0.0.1", 0))
+        closed = f"http://127.0.0.1:{s.getsockname()[1]}"
+    server.on("/v1/gateway/logs", counts)
+    clock = FakeClock()
+    lg = logger(server, api_base=closed)
+    lg._now = clock
+    push_rows(lg, 2)
+    assert len(lg._queue) == 2 and lg._failures == 1 and lg.dropped == 0
+
+    lg._api_base_setting = server.url
+    clock.t = lg._retry_at
+    asyncio.run(lg.flush())
+    assert len(pushed_rows(server)) == 2 and not lg._queue and lg._failures == 0
+
+
+def test_the_logger_retries_on_its_own_clock(server):
+    answers = iter([503, 503, 503])
+
+    def flaky(req):
+        status = next(answers, 200)
+        return counts(req) if status == 200 else (status, {}, {})
+
+    server.on("/v1/gateway/logs", flaky)
+    lg = logger(server, flush_interval_seconds=0.02, retry_delay_seconds=0.01, retry_max_delay_seconds=0.05)
+
+    async def go():
+        for _ in range(3):
+            await lg.async_log_success_event(kwargs_for(payload()), Response(), START, END)
+        await asyncio.sleep(1.0)  # nobody calls flush
+
+    asyncio.run(go())
+    assert len(server.hits("/v1/gateway/logs")) == 4
+    assert len(pushed_rows(server)) == 12  # 3 rows, 4 tries
+    assert not lg._queue
+
+
+def test_the_hook_never_waits_for_tensorcost(server):
+    server.on("/v1/gateway/logs", counts)
+    server.delay["/v1/gateway/logs"] = 0.5
+    lg = logger(server, batch_size=1)
+
+    async def go():
+        began = time.monotonic()
+        for _ in range(5):
+            await lg.async_log_success_event(kwargs_for(payload()), Response(), START, END)
+        took = time.monotonic() - began
+        await lg.flush()
+        return took
+
+    assert asyncio.run(go()) < 0.2  # one push alone takes 0.5 s
+    assert len(pushed_rows(server)) == 5
 
 
 def test_rows_queued_under_the_batch_size_go_on_the_timer(server):
@@ -288,6 +450,54 @@ def test_a_full_queue_drops_rows_rather_than_growing(server):
 
     asyncio.run(go())
     assert lg.dropped == 2
+
+
+def test_a_full_queue_in_an_outage_drops_the_oldest_and_says_so(server, caplog):
+    up = {"ok": False}
+    server.on("/v1/gateway/logs", lambda req: counts(req) if up["ok"] else (503, {}, {}))
+    clock = FakeClock()
+    lg = logger(server, max_queue=3, batch_size=500)
+    lg._now = clock
+    caplog.set_level(logging.WARNING, logger="tensorcost_litellm")
+    ids = []
+
+    async def go():
+        await lg.async_log_success_event(kwargs_for(payload()), Response(), START, END)
+        ids.append(lg._queue[-1]["request_id"])
+        await lg.flush()  # 503: the outage begins
+        for _ in range(4):
+            clock.t += 10
+            await lg.async_log_success_event(kwargs_for(payload()), Response(), START, END)
+            ids.append(lg._queue[-1]["request_id"])
+        assert record_ids(lg) == ids[-3:]
+        up["ok"] = True
+        clock.t = lg._retry_at
+        await lg.flush()
+
+    asyncio.run(go())
+    assert lg.dropped == 2
+    assert [r["request_id"] for r in pushed_rows(server)][-3:] == ids[-3:]
+    [line] = [r for r in caplog.records if "queue full" in r.getMessage()]
+    assert line.levelno == logging.ERROR
+    assert "3 rows waiting" in line.getMessage() and "1 dropped so far" in line.getMessage()
+
+
+def test_the_batch_in_flight_counts_toward_the_queue_bound(server):
+    server.on("/v1/gateway/logs", lambda req: (503, {}, {}))
+    server.delay["/v1/gateway/logs"] = 0.3
+    lg = logger(server, max_queue=4, batch_size=4)
+
+    async def go():
+        for _ in range(4):
+            await lg.async_log_success_event(kwargs_for(payload()), Response(), START, END)
+        await asyncio.sleep(0.1)  # the batch is in flight now
+        assert len(lg._in_flight) == 4
+        for _ in range(2):
+            await lg.async_log_success_event(kwargs_for(payload()), Response(), START, END)
+        await asyncio.sleep(0.5)  # the 503 comes back and so does the batch
+
+    asyncio.run(go())
+    assert len(lg._queue) + len(lg._in_flight) == 4 and lg.dropped == 2
 
 
 # ------------------------------------------- one row per call carries the correlation id
@@ -374,3 +584,94 @@ def test_rows_still_queued_at_exit_are_sent_once(server):
     rows = pushed_rows(server)
     assert len(rows) == 2
     assert sum(CORRELATION_METADATA_KEY in r["metadata"] for r in rows) == 1
+
+
+def test_at_exit_a_tensorcost_that_is_down_is_tried_once_and_the_loss_is_logged(server, caplog):
+    server.on("/v1/gateway/logs", lambda req: (503, {}, {}))
+    lg = logger(server, batch_size=2)
+
+    async def go():
+        for _ in range(5):
+            await lg.async_log_success_event(kwargs_for(payload()), Response(), START, END)
+
+    asyncio.run(go())
+    caplog.set_level(logging.WARNING, logger="tensorcost_litellm")
+    # Shutdown cancelled the push in flight: its rows are queued again.
+    assert len(lg._queue) == 5 and not lg._in_flight
+    began = time.monotonic()
+    lg.flush_at_exit()
+    assert time.monotonic() - began < 5.5
+    assert len(server.hits("/v1/gateway/logs")) <= 3  # it stops at the first failure
+    [line] = [r for r in caplog.records if "not sent at exit" in r.getMessage()]
+    assert line.levelno == logging.ERROR and "of 5 spend rows" in line.getMessage() and "503" in line.getMessage()
+
+
+def test_at_exit_the_batch_in_flight_is_sent_again(server):
+    server.on("/v1/gateway/logs", counts)
+    lg = logger(server)
+    row = spend_row(kwargs_for(payload()), Response(), START, END, failed=False)
+    lg._in_flight = [row]
+    lg.flush_at_exit()
+    assert [r["request_id"] for r in pushed_rows(server)] == [row["request_id"]]
+
+
+def test_a_resolved_alias_row_names_the_deployment_and_keeps_the_alias_beside_it():
+    # LiteLLM's standard logging payload names the router's deployment
+    # (litellm_params.model, "azure/gpt-5.4"); model_group is the caller's alias.
+    slp = payload(
+        model="azure/gpt-5.4",
+        model_group="azure-gpt-5.4",
+        custom_llm_provider="azure",
+        api_base="https://acme.openai.azure.com",
+    )
+    row = spend_row(kwargs_for(slp), Response(), START, END, failed=False)
+    assert row["model"] == "azure/gpt-5.4"
+    assert row["model_group"] == "azure-gpt-5.4"
+    assert row["api_base"] == "https://acme.openai.azure.com"
+
+
+def test_an_unresolved_model_says_so_without_the_message():
+    # LiteLLM had no deployment for the name: its 400 quotes the caller's alias.
+    slp = payload(
+        status="failure",
+        model="azure-gpt-5.4",
+        model_group=None,
+        api_base="",
+        response_cost=0.0,
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+        error_information={
+            "error_code": "400",
+            "error_class": "ProxyModelNotFoundError",
+            "error_message": "/chat/completions: Invalid model name passed in model=azure-gpt-5.4. Call `/v1/models` to view available models for your key.",
+            "llm_provider": "",
+        },
+    )
+    row = spend_row(kwargs_for(slp), None, START, END, failed=True)
+    assert row["metadata"]["error_information"] == {
+        "error_code": "400",
+        "error_class": "ProxyModelNotFoundError",
+        "error_message": "invalid model name",
+    }
+    assert "api_base" not in row
+    assert "azure-gpt-5.4" not in json.dumps(row["metadata"])
+
+
+def test_the_row_names_the_application_admit_was_sent():
+    # The same request admit saw: header, then metadata, then tag, then end user, then key alias.
+    from tensorcost_litellm._shared import request_application
+
+    params = {"proxy_server_request": {"headers": {"x-tc-application": "support-bot"}}, "metadata": {"tensorcost_application": "other"}}
+    slp = payload()
+    row = spend_row({**kwargs_for(slp), "litellm_params": params}, Response(), START, END, failed=False)
+    assert row["metadata"]["tensorcost_application"] == "support-bot"
+    assert request_application(params, ["application=x"], "eu", "key") == "support-bot"
+
+    slp = payload(request_tags=["app=search"], end_user=None)
+    row = spend_row(kwargs_for(slp), Response(), START, END, failed=False)
+    assert row["metadata"]["tensorcost_application"] == "search"
+
+    slp = payload(request_tags=[], end_user=None)
+    row = spend_row(kwargs_for(slp), Response(), START, END, failed=False)
+    assert row["metadata"]["tensorcost_application"] == "ci-key"
