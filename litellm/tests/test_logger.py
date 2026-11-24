@@ -675,3 +675,39 @@ def test_the_row_names_the_application_admit_was_sent():
     slp = payload(request_tags=[], end_user=None)
     row = spend_row(kwargs_for(slp), Response(), START, END, failed=False)
     assert row["metadata"]["tensorcost_application"] == "ci-key"
+
+
+# ------------------------------------------- base_model: Azure deployment names
+
+
+def _azure(**over):
+    return payload(model="azure/prod-mini-deploy", model_group="chat-mini", api_base="https://acme.openai.azure.com", **over)
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        # Where LiteLLM 1.108.9 reads it for cost (utils.get_base_model_from_metadata), in its order.
+        {"base_model": "azure/gpt-4o-mini", "metadata": {"model_info": {"base_model": "azure/gpt-4.1"}}},
+        {"metadata": {"model_info": {"base_model": "azure/gpt-4o-mini"}}},
+        {"metadata": {}, "litellm_metadata": {"model_info": {"base_model": "azure/gpt-4o-mini"}}},
+        # A bare base_model takes the deployment's routing prefix, so the row's provider reads as before.
+        {"metadata": {"model_info": {"base_model": "gpt-4o-mini"}}},
+    ],
+)
+def test_a_deployments_base_model_is_the_rows_model_and_its_name_goes_beside_it(params):
+    kw = kwargs_for(_azure())
+    kw["litellm_params"] = params
+    row = spend_row(kw, Response(), START, END, failed=False)
+    assert row["model"] == "azure/gpt-4o-mini"
+    assert row["deployment"] == "azure/prod-mini-deploy"
+    assert row["model_group"] == "chat-mini"
+
+
+def test_without_base_model_the_row_is_as_before():
+    row = spend_row(kwargs_for(_azure()), Response(), START, END, failed=False)
+    assert row["model"] == "azure/prod-mini-deploy"
+    assert "deployment" not in row
+    same = kwargs_for(_azure())
+    same["litellm_params"] = {"metadata": {"model_info": {"base_model": "azure/prod-mini-deploy"}}}
+    assert "deployment" not in spend_row(same, Response(), START, END, failed=False)

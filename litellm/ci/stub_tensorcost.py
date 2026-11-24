@@ -1,7 +1,9 @@
 """A stand-in TensorCost for the end-to-end job.
 
 POST /v1/gateway/admit allows every call except one whose max_tokens is 999,
-which it refuses the way TensorCost refuses a budget. POST /v1/gateway/logs
+which it refuses the way TensorCost refuses a budget, and one whose
+max_tokens is 777, which it reroutes to the first accepts_models entry that
+names another deployment, answering with the entry's name as TensorCost does. POST /v1/gateway/logs
 takes the logger's rows. GET /seen answers everything it was sent, for the
 driver to check.
 
@@ -17,6 +19,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 REFUSE_MAX_TOKENS = 999
+REROUTE_MAX_TOKENS = 777
 REFUSAL_MESSAGE = "TensorCost: CI team has reached its monthly AI budget ($10). Ask a TensorCost admin to raise it."
 
 seen = {"admits": [], "logs": [], "cancels": []}
@@ -67,6 +70,18 @@ class Handler(BaseHTTPRequestHandler):
                     {**base, "decision": "refuse", "reason": "budget_hard_cap", "message": REFUSAL_MESSAGE, "retry_after_seconds": 3600},
                     {"x-tc-fail-mode": "open"},
                 )
+            if body.get("max_tokens") == REROUTE_MAX_TOKENS:
+                other = next(
+                    (m for m in body.get("accepts_models") or [] if isinstance(m, dict) and m.get("model") != body.get("model")),
+                    None,
+                )
+                if other:
+                    route = {"policy_id": str(uuid.uuid4()), "from_model": body.get("model"), "to_model": other["model"]}
+                    return self._answer(
+                        200,
+                        {**base, "decision": "reroute", "model": other["name"], "route": route, "reason": None, "message": None},
+                        {"x-tc-fail-mode": "open"},
+                    )
             return self._answer(200, {**base, "decision": "allow", "reason": None, "message": None}, {"x-tc-fail-mode": "open"})
         if path == "/v1/gateway/logs":
             rows = body if isinstance(body, list) else (body or {}).get("logs", [])

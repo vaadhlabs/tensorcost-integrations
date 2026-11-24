@@ -80,7 +80,8 @@ test('the reader refuses YAML it does not cover instead of guessing', () => {
   assert.throws(() => parseYaml('a: &x 1\nb: *x\n'), /unsupported/);
   assert.throws(() => parseYaml('a: one\n  two\n'), /multi-line/);
   assert.throws(() => parseYaml('a: { b: c, d }\n'), /expected ":"/);
-  assert.throws(() => validate({}, { oneOf: [] }, 1), /not supported/);
+  assert.throws(() => validate({}, { anyOf: [] }, 1), /not supported/);
+  assert.throws(() => validate({}, { oneOf: [], type: 'string' }, 1), /not supported/);
 });
 
 test('a plain caller gets an allow that holds its reservation and is never cacheable', async () => {
@@ -131,6 +132,26 @@ test('reroute-* names a model the gateway listed, and only to a gateway that can
     assert.equal(a.json.cache_ttl_seconds, 0);
     assertValidAnswer(a.json);
   }
+});
+
+test('accepts_models may name deployments: a reroute answers the name, and the request still validates', async () => {
+  const deployments = [
+    { name: 'prod-sonnet', model: 'claude-sonnet-4-5', provider: 'anthropic' },
+    { name: 'prod-haiku', model: 'claude-haiku-4-5', provider: 'anthropic' },
+    'prod-sonnet',
+    'prod-haiku',
+  ];
+  const r = await admit(body('reroute-claude-haiku-4-5', { accepts_models: deployments }));
+  assert.equal(r.json.decision, 'reroute');
+  assert.equal(r.json.model, 'prod-haiku');
+  assert.equal(r.json.route.to_model, 'claude-haiku-4-5');
+  assertValidAnswer(r.json);
+  assert.deepEqual(mock.log.admits.at(-1).request_errors, []);
+
+  await admit(body('team-search', { accepts_models: [{ model: 'claude-haiku-4-5' }, 7] }));
+  const { request_errors: errs } = mock.log.admits.at(-1);
+  assert.ok(errs.some((e) => /accepts_models\[0\]: matches none/.test(e) && /missing name/.test(e)), errs.join('; '));
+  assert.ok(errs.some((e) => /accepts_models\[1\]: matches none/.test(e)), errs.join('; '));
 });
 
 test('slow-* answers after the time it names', async () => {

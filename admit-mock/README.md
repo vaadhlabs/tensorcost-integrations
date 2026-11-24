@@ -34,7 +34,7 @@ name, a Kong consumer or a tag.
 | --- | --- |
 | anything else | `allow`, holding its reservation, `cache_ttl_seconds` 0 |
 | `refuse-*` | `refuse`, reason `budget_hard_cap`, naming the "Search team" budget and who can raise it. `refuse-<reason>` gives that reason instead, for example `refuse-model_governance_denied` |
-| `reroute-*` | `reroute` to the first model in `accepts_models` other than the one asked for, or `reroute-<model>` to that one if listed. An allow as asked when the gateway kind can't reroute, `can_reroute` is false, or no other model is listed |
+| `reroute-*` | `reroute` to the first model in `accepts_models` other than the one asked for, or `reroute-<model>` to that one if listed. An entry that names its deployment (`{name, model, provider}`) is judged by `model` and answered with `name`. An allow as asked when the gateway kind can't reroute, `can_reroute` is false, or no other model is listed |
 | `slow-*` | an allow after 1,500 ms (`--slow-ms`), or `slow-<ms>` that many milliseconds |
 | `error-*` | a 503, or `error-<status>` that status (400 to 599). `error-not-json` is a 200 with an HTML body |
 | `degraded-*` | an open workspace's answer to a check that timed out: `allow` with `degraded: true`, detail `check_timeout` |

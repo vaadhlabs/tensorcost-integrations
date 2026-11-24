@@ -31,7 +31,7 @@ APPLICATION_METADATA_KEY = "tensorcost_application"
 MAX_APPLICATION = 256
 
 #: The plugin's version, which every request to TensorCost names in its User-Agent.
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 USER_AGENT = f"TensorCost-LiteLLM/{VERSION}"
 
 URL_ENV = "TENSORCOST_URL"
@@ -266,3 +266,41 @@ def non_negative_int(value: Any) -> Optional[int]:
     if isinstance(value, str) and value.strip().isdigit():
         return int(value.strip())
     return None
+
+
+def base_model(litellm_params: Any, model_info: Any = None) -> Optional[str]:
+    """The model a deployment bills as, when its config names one (``base_model``).
+
+    Azure deployments carry names of the customer's own ("prod-mini-deploy"),
+    so LiteLLM's Azure docs ask for ``base_model`` ("azure/gpt-4o-mini") to
+    price them. Read as LiteLLM 1.108.9 reads it for cost
+    (litellm.utils.get_base_model_from_metadata): ``litellm_params.base_model``
+    first, then the deployment's ``model_info.base_model``. Pass the call's
+    ``model_info`` (from a model_list entry); without one, the call's own
+    ``litellm_params.metadata`` and ``litellm_metadata`` are searched for it,
+    where LiteLLM's router puts the deployment's model_info on each call.
+    """
+    found = text(_get_field(litellm_params, "base_model"))
+    if found:
+        return found
+    infos = [model_info] if model_info is not None else [
+        _get_field(_get_field(litellm_params, key), "model_info") for key in ("metadata", "litellm_metadata")
+    ]
+    for info in infos:
+        found = text(_get_field(info, "base_model"))
+        if found:
+            return found
+    return None
+
+
+def without_provider_prefix(model: str, provider: Optional[str]) -> str:
+    """LiteLLM's routing prefix taken off: "azure/gpt-4o-mini" under azure is "gpt-4o-mini"."""
+    if provider and model.lower().startswith(provider.lower() + "/"):
+        return model[len(provider) + 1 :] or model
+    return model
+
+
+def _get_field(obj: Any, name: str) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None) if obj is not None else None

@@ -25,7 +25,11 @@ carries the gateway connection's own key, `Authorization: Bearer tcgw_…`,
 which TensorCost shows once when an admin creates the connection. It is not an
 SDK token, and an SDK token is refused here.
 
-Only `model` is required. The rest makes the answer better: `callers` (who is
+Only `model` is required. For a deployment with a name of its own (an Azure
+deployment `prod-mini-deploy`), `model` is the model behind it (`gpt-4o-mini`)
+and `deployment` names the deployment: the call is priced, budgeted, governed
+and routed as the model, and a governance approval made under the
+deployment's name still counts. The rest makes the answer better: `callers` (who is
 calling, below), `provider`, `max_tokens` and `input_tokens` (the call's size,
 which its reservation is priced from), `accepts_models` and `can_reroute`
 (below), `correlation_id` (the gateway's own call id, which TensorCost uses to
@@ -220,8 +224,24 @@ call's reservation is priced for the model it names.
 Only a client that can rewrite the call's model follows a reroute, and only
 the gateway kinds that can (LiteLLM, Azure APIM and Apigee connections) are
 ever sent one. The model named is one the client listed in `accepts_models`,
-or one in the connection's model list, spelled as the gateway spelled it. A
-client that can't rewrite a particular call, such as an Azure OpenAI API
+or one in the connection's model list, spelled as the gateway spelled it.
+
+An `accepts_models` entry is a bare name (`"claude-haiku-4-5"`) or an object
+naming what the name runs: `{"name": "azure-gpt-5.4-mini", "model":
+"gpt-5.4-mini", "provider": "azure"}`, plus `deployment` when the name runs a
+deployment of the gateway's own naming. A gateway whose names are aliases of
+its own, as LiteLLM's `model_name`s usually are, should send objects:
+TensorCost matches the route's target model against `model` and `provider`
+and answers with `name`. A route that stays with the call's provider only
+picks a deployment under that provider. A bare name is matched by its
+spelling, so it reroutes only when the name is the target model's own id
+(dated or not, with or without a `vendor/` prefix). The two shapes may be
+mixed; a name sent both ways is kept once, as the object, and the cap of 32
+counts names. A TensorCost older than the object shape drops each object
+(naming it in `detail`) and keeps the bare names, so a client that sends both
+works with either.
+
+A client that can't rewrite a particular call, such as an Azure OpenAI API
 behind APIM whose model is the deployment in the URL path, sends
 `can_reroute: false`. Admit then never answers reroute for that call, and a
 matching policy is recorded as shadow advice only. Leaving `can_reroute` out,

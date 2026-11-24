@@ -347,6 +347,17 @@ export function validate(spec, schema, value, { strict = false, at = '$' } = {})
       walk(resolveRef(spec, s.$ref), v, where);
       return;
     }
+    if (s.oneOf) {
+      // Exactly one branch holds (accepts_models: a bare name or an object).
+      const others = Object.keys(s).filter((k) => k !== 'oneOf' && !ANNOTATIONS.has(k));
+      if (others.length) throw new Error(`${where}: oneOf beside ${others.join(', ')} is not supported`);
+      const fits = s.oneOf.map((branch) => validate(spec, branch, v, { strict, at: where }));
+      const held = fits.filter((e) => e.length === 0).length;
+      if (held === 1) return;
+      if (held === 0) errors.push(`${where}: matches none of its oneOf schemas (${fits.map((e) => e[0]).join('; ')})`);
+      else errors.push(`${where}: matches ${held} of its oneOf schemas, wants one`);
+      return;
+    }
     for (const k of Object.keys(s)) {
       if (ANNOTATIONS.has(k) || k.startsWith('x-')) continue;
       if (!['type', 'enum', 'required', 'properties', 'items', 'maxItems', 'minItems', 'minimum', 'maximum', 'maxLength', 'minLength', 'format'].includes(k)) {

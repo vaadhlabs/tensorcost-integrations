@@ -88,7 +88,14 @@ def test_allow_passes_the_request_through_and_sends_what_the_contract_reads(serv
     assert body["model"] == "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
     assert body["provider"] == "bedrock"
     assert body["provider"] == "bedrock"
-    assert body["accepts_models"] == ["claude-sonnet", "claude-haiku", "gpt-4o"]
+    assert body["accepts_models"] == [
+        {"name": "claude-sonnet", "model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0", "provider": "bedrock"},
+        {"name": "claude-haiku", "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0", "provider": "bedrock"},
+        {"name": "gpt-4o", "model": "gpt-4o", "provider": "openai"},
+        "claude-sonnet",
+        "claude-haiku",
+        "gpt-4o",
+    ]
     assert body["max_tokens"] == 512
     assert body["input_tokens"] == 42
     assert body["gateway"] == {"kind": "litellm", "instance": None}
@@ -571,9 +578,9 @@ def test_model_info_drops_the_provider_routing_prefix():
             {"model_name": "plain", "litellm_params": {"model": "gpt-4o"}},
         ]
     )
-    assert deployments["gpt-4.1-mini"] == ("gpt-4.1-mini", "openai")
-    assert deployments["haiku"] == ("anthropic.claude-3-haiku", "bedrock")
-    assert deployments["plain"] == ("gpt-4o", None)
+    assert deployments["gpt-4.1-mini"] == ("gpt-4.1-mini", "openai", None)
+    assert deployments["haiku"] == ("anthropic.claude-3-haiku", "bedrock", None)
+    assert deployments["plain"] == ("gpt-4o", None, None)
 
 
 def test_a_policy_refusal_is_403_and_a_budget_refusal_stays_429():
@@ -601,12 +608,12 @@ ALIAS_LIST = [
 def test_an_alias_resolves_to_its_deployments_model_and_provider():
     names, deployments = model_info_from_list(ALIAS_LIST)
     assert names == ["azure-gpt-5.4", "cheap", "gpt-4.1-mini", "bare"]
-    assert deployments["azure-gpt-5.4"] == ("gpt-5.4", "azure")
-    assert deployments["cheap"] == ("us.anthropic.claude-haiku-4-5-20251001-v1:0", "bedrock")
+    assert deployments["azure-gpt-5.4"] == ("gpt-5.4", "azure", None)
+    assert deployments["cheap"] == ("us.anthropic.claude-haiku-4-5-20251001-v1:0", "bedrock", None)
     # An alias equal to the model resolves to the same model.
-    assert deployments["gpt-4.1-mini"] == ("gpt-4.1-mini", "openai")
+    assert deployments["gpt-4.1-mini"] == ("gpt-4.1-mini", "openai", None)
     # No litellm_params: nothing to resolve, and no crash.
-    assert deployments["bare"] == (None, None)
+    assert deployments["bare"] == (None, None, None)
 
 
 def test_admit_names_the_deployment_not_the_alias(server):
@@ -670,3 +677,142 @@ def test_an_allow_for_one_application_is_never_reused_for_another(server):
     for app in ("a", "b", "a"):
         run(g.async_pre_call_hook(Key(), None, request(proxy_server_request={"headers": {"x-tc-application": app}}), "completion"))
     assert [h["body"]["application"] for h in server.hits("/v1/gateway/admit")] == ["a", "b"]
+
+
+# ----------------------------------------------------- accepts_models (0.1.4)
+
+
+def test_accepts_models_pairs_each_alias_with_its_deployment_then_sends_the_bare_names(server):
+    # On a test install, 0.1.3 sent only "azure-gpt-5.4-mini", which never
+    # matched a route to gpt-5.4-mini, and 71 calls gave 0 reroutes.
+    server.on("/v1/gateway/admit", allow())
+    g = guard(server, model_info=lambda: model_info_from_list(ALIAS_LIST))
+    run(g.async_pre_call_hook(Key(), None, request(model="azure-gpt-5.4"), "completion"))
+    body = server.hits("/v1/gateway/admit")[-1]["body"]
+    assert body["accepts_models"] == [
+        {"name": "azure-gpt-5.4", "model": "gpt-5.4", "provider": "azure"},
+        {"name": "cheap", "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0", "provider": "bedrock"},
+        {"name": "gpt-4.1-mini", "model": "gpt-4.1-mini", "provider": "openai"},
+        # Nothing to describe for a name with no litellm_params: a bare name only.
+        "azure-gpt-5.4",
+        "cheap",
+        "gpt-4.1-mini",
+        "bare",
+    ]
+
+
+def test_a_deployment_with_no_provider_is_described_without_one():
+    from tensorcost_litellm.guardrail import accepted_models
+
+    names, deployments = model_info_from_list([{"model_name": "plain", "litellm_params": {"model": "gpt-4o"}}])
+    assert accepted_models(names, deployments) == [{"name": "plain", "model": "gpt-4o"}, "plain"]
+
+
+def test_a_wildcard_route_goes_only_as_a_bare_name():
+    from tensorcost_litellm.guardrail import accepted_models
+
+    names, deployments = model_info_from_list(
+        [
+            {"model_name": "bedrock/*", "litellm_params": {"model": "bedrock/*"}},
+            {"model_name": "*", "litellm_params": {"model": "*"}},
+            {"model_name": "mini", "litellm_params": {"model": "openai/gpt-4o-mini"}},
+        ]
+    )
+    assert accepted_models(names, deployments) == [{"name": "mini", "model": "gpt-4o-mini", "provider": "openai"}, "bedrock/*", "*", "mini"]
+
+
+def test_both_halves_keep_the_contracts_cap_of_32():
+    from tensorcost_litellm.guardrail import MAX_MODELS, accepted_models
+
+    names, deployments = model_info_from_list([{"model_name": f"m{i}", "litellm_params": {"model": f"openai/m{i}"}} for i in range(40)])
+    out = accepted_models(names, deployments)
+    assert [e for e in out if isinstance(e, dict)] == [{"name": f"m{i}", "model": f"m{i}", "provider": "openai"} for i in range(MAX_MODELS)]
+    assert [e for e in out if isinstance(e, str)] == [f"m{i}" for i in range(MAX_MODELS)]
+
+
+def _reroute_to(server, target, model_info):
+    server.on("/v1/gateway/admit", allow(decision="reroute", model=target, route={"policy_id": "p", "from_model": "gpt-5.4", "to_model": "gpt-5.4-mini"}))
+    data = request(model="azure-gpt-5.4")
+    run(guard(server, model_info=model_info).async_pre_call_hook(Key(), None, data, "completion"))
+    return data
+
+
+def test_a_reroute_to_an_alias_sets_the_alias_litellm_routes_by(server):
+    alias_list = ALIAS_LIST + [{"model_name": "azure-gpt-5.4-mini", "litellm_params": {"model": "azure/gpt-5.4-mini"}}]
+    data = _reroute_to(server, "azure-gpt-5.4-mini", lambda: model_info_from_list(alias_list))
+    assert data["model"] == "azure-gpt-5.4-mini"
+
+
+def test_a_reroute_to_a_name_the_proxy_doesnt_serve_runs_the_call_as_asked(server, caplog):
+    # LiteLLM would fail the call with "Invalid model name"; the asked model runs instead.
+    data = _reroute_to(server, "gpt-5.4-mini", lambda: model_info_from_list(ALIAS_LIST))
+    assert data["model"] == "azure-gpt-5.4"
+    assert any("isn't a model_name here" in r.getMessage() for r in caplog.records)
+
+
+def test_a_reroute_a_wildcard_route_covers_is_followed(server):
+    data = _reroute_to(server, "openai/gpt-5.4-mini", lambda: model_info_from_list([{"model_name": "openai/*", "litellm_params": {"model": "openai/*"}}]))
+    assert data["model"] == "openai/gpt-5.4-mini"
+
+
+def test_a_reroute_is_followed_when_the_model_list_couldnt_be_read(server):
+    data = _reroute_to(server, "azure-gpt-5.4-mini", lambda: ([], {}))
+    assert data["model"] == "azure-gpt-5.4-mini"
+
+
+# ------------------------------------------- base_model: Azure deployment names
+
+# Enterprises name Azure deployments their own way; LiteLLM's Azure docs ask
+# for base_model so the call is priced as the model behind the name.
+NAMED_AZURE = [
+    {
+        "model_name": "chat-mini",
+        "litellm_params": {"model": "azure/prod-mini-deploy", "api_base": "https://acme.openai.azure.com"},
+        "model_info": {"base_model": "azure/gpt-4o-mini"},
+    },
+    {"model_name": "chat-big", "litellm_params": {"model": "azure/prod-big-deploy", "base_model": "azure/gpt-4o"}, "model_info": {"base_model": "azure/gpt-4.1"}},
+    {"model_name": "chat-same", "litellm_params": {"model": "azure/gpt-4o"}, "model_info": {"base_model": "azure/gpt-4o"}},
+    {"model_name": "chat-bare-base", "litellm_params": {"model": "azure/prod-nano"}, "model_info": {"base_model": "gpt-4.1-nano"}},
+]
+
+
+def test_a_deployments_base_model_is_its_model_and_its_name_goes_beside_it():
+    _, deployments = model_info_from_list(NAMED_AZURE)
+    assert deployments["chat-mini"] == ("gpt-4o-mini", "azure", "prod-mini-deploy")
+    # litellm_params.base_model wins over model_info's, as LiteLLM prices it.
+    assert deployments["chat-big"] == ("gpt-4o", "azure", "prod-big-deploy")
+    # A base_model that is the deployment's own model changes nothing.
+    assert deployments["chat-same"] == ("gpt-4o", "azure", None)
+    assert deployments["chat-bare-base"] == ("gpt-4.1-nano", "azure", "prod-nano")
+
+
+def test_admit_checks_the_base_model_and_names_the_deployment(server):
+    server.on("/v1/gateway/admit", allow())
+    g = guard(server, model_info=lambda: model_info_from_list(NAMED_AZURE))
+    data = request(model="chat-mini")
+    run(g.async_pre_call_hook(Key(), None, data, "completion"))
+    body = server.hits("/v1/gateway/admit")[-1]["body"]
+    assert (body["model"], body["provider"], body["deployment"]) == ("gpt-4o-mini", "azure", "prod-mini-deploy")
+    assert {"name": "chat-mini", "model": "gpt-4o-mini", "provider": "azure", "deployment": "prod-mini-deploy"} in body["accepts_models"]
+    assert {"name": "chat-same", "model": "gpt-4o", "provider": "azure"} in body["accepts_models"]
+    # LiteLLM still routes by the alias.
+    assert data["model"] == "chat-mini"
+
+
+def test_without_base_model_admit_is_as_before(server):
+    server.on("/v1/gateway/admit", allow())
+    g = guard(server, model_info=lambda: model_info_from_list(ALIAS_LIST))
+    run(g.async_pre_call_hook(Key(), None, request(model="azure-gpt-5.4"), "completion"))
+    body = server.hits("/v1/gateway/admit")[-1]["body"]
+    assert body["model"] == "gpt-5.4"
+    assert "deployment" not in body
+    assert all("deployment" not in e for e in body["accepts_models"] if isinstance(e, dict))
+
+
+def test_a_model_info_callable_that_returns_pairs_still_works(server):
+    server.on("/v1/gateway/admit", allow())
+    g = guard(server, model_info=lambda: (["x"], {"x": ("gpt-4o", "openai")}))
+    run(g.async_pre_call_hook(Key(), None, request(model="x"), "completion"))
+    body = server.hits("/v1/gateway/admit")[-1]["body"]
+    assert (body["model"], body["provider"]) == ("gpt-4o", "openai")
+    assert body["accepts_models"] == [{"name": "x", "model": "gpt-4o", "provider": "openai"}, "x"]

@@ -263,16 +263,19 @@ export function createMock(options = {}) {
         break;
       }
       case 'reroute': {
-        const accepts = Array.isArray(body.accepts_models) ? body.accepts_models.filter((m) => typeof m === 'string') : [];
-        const target = accepts.includes(behaviour.arg) && behaviour.arg !== body.model
-          ? behaviour.arg
-          : accepts.find((m) => m !== body.model) ?? null;
-        if (target && body.can_reroute !== false && REROUTE_KINDS.has(kind)) {
+        // A bare name is its own model; an object is answered by its name and judged by its model.
+        const accepts = (Array.isArray(body.accepts_models) ? body.accepts_models : [])
+          .map((m) => (typeof m === 'string' ? { name: m, model: m }
+            : m && typeof m === 'object' && typeof m.name === 'string' ? { name: m.name, model: typeof m.model === 'string' ? m.model : m.name } : null))
+          .filter((m) => m !== null);
+        const pick = accepts.find((m) => (m.name === behaviour.arg || m.model === behaviour.arg) && m.model !== body.model)
+          ?? accepts.find((m) => m.model !== body.model);
+        if (pick && body.can_reroute !== false && REROUTE_KINDS.has(kind)) {
           a = {
             ...allow(),
             decision: 'reroute',
-            model: target,
-            route: { policy_id: '9e7c5a3b-1d2f-4a6e-8b0c-2d4f6a8c0e1b', from_model: body.model, to_model: target },
+            model: pick.name,
+            route: { policy_id: '9e7c5a3b-1d2f-4a6e-8b0c-2d4f6a8c0e1b', from_model: body.model, to_model: pick.model },
           };
         } else {
           // The policy would cover the call, but this call can't follow it:

@@ -8,7 +8,8 @@ what the answer says:
   stamped in its metadata.
 - ``refuse``: the hook raises a 429 carrying TensorCost's message (which names
   the budget and who can raise it) and ``Retry-After``.
-- ``reroute``: the hook sets ``data["model"]`` to the model TensorCost names.
+- ``reroute``: the hook sets ``data["model"]`` to the model TensorCost names,
+  one of the proxy's own model_name aliases (see ``accepted_models``).
 
 Every answered decision is an HTTP 200. Anything else (a timeout, a non-2xx,
 a body that isn't a decision) means TensorCost failed, and the fail mode
@@ -25,6 +26,7 @@ or five minutes pass.
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import logging
 import time
 import uuid
@@ -39,6 +41,7 @@ from ._shared import (
     KEY_ENV,
     CallRecord,
     auth_headers,
+    base_model,
     base_url,
     calls,
     non_negative_int,
@@ -47,6 +50,7 @@ from ._shared import (
     resolve_setting,
     stamped_correlation_id,
     text,
+    without_provider_prefix,
 )
 
 log = logging.getLogger("tensorcost_litellm")
@@ -71,7 +75,12 @@ CHECK_FAILED_REASONS = frozenset({"check_unavailable", "invalid_request"})
 #: LiteLLM's error classes whose status LiteLLM made up rather than the provider sent.
 LITELLM_OWN_STATUS_CLASSES = frozenset({"Timeout", "APIConnectionError", "MidStreamFallbackError"})
 
-ModelInfo = Tuple[List[str], Dict[str, Tuple[Optional[str], Optional[str]]]]
+#: A model_name's first deployment: (model, provider, deployment). ``model``
+#: is the provider's own model id (the deployment's ``base_model`` when its
+#: config names one), and ``deployment`` the deployment's own name when that
+#: differs ("prod-mini-deploy" behind base_model gpt-4o-mini), else None.
+Deployment = Tuple[Optional[str], Optional[str], Optional[str]]
+ModelInfo = Tuple[List[str], Dict[str, Deployment]]
 
 
 class TensorCostUnavailable(Exception):
@@ -125,7 +134,7 @@ class TensorCostAdmit(CustomGuardrail):
         _stamp_correlation(data, correlation_id)
 
         names, deployments = self._models()
-        asked_model, provider = deployments.get(model, (None, None))
+        asked_model, provider, deployment = _deployment(deployments.get(model))
         if provider is None and "/" in model:
             # A wildcard route ("bedrock/*"): the name is the provider's own.
             provider = model.split("/", 1)[0]
@@ -137,8 +146,13 @@ class TensorCostAdmit(CustomGuardrail):
         }
         if provider:
             body["provider"] = provider
-        if names:
-            body["accepts_models"] = names[:MAX_MODELS]
+        if deployment:
+            # The deployment's own name, beside the model it bills as: what
+            # the call is priced, budgeted and governed under is the model.
+            body["deployment"] = deployment
+        accepts = accepted_models(names, deployments)
+        if accepts:
+            body["accepts_models"] = accepts
         if tags:
             body["tags"] = tags[:MAX_TAGS]
         # The end customer (metadata tensorcost_customer): judged against its
@@ -185,8 +199,14 @@ class TensorCostAdmit(CustomGuardrail):
         calls.put(CallRecord(correlation_id, text(answer.get("decision_id"), 100), time.monotonic(), id(data)))
         if decision == "reroute":
             target = text(answer.get("model"))
-            if target:
+            if target and _servable(target, names):
                 data["model"] = target
+            elif target:
+                # A name no model_list entry has would fail the call with
+                # LiteLLM's "Invalid model name". It runs as asked; TensorCost
+                # sees the asked model on its spend row and never confirms the
+                # reroute.
+                log.warning("tensorcost: TensorCost rerouted to %r, which isn't a model_name here; the call runs as asked", target)
             return data
         if _cacheable(answer):
             self._allow_cache[cache_key] = time.monotonic() + float(answer["cache_ttl_seconds"])
@@ -533,7 +553,7 @@ def _proxy_model_info() -> ModelInfo:
 
 def model_info_from_list(model_list: Sequence[Any]) -> ModelInfo:
     names: List[str] = []
-    deployments: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
+    deployments: Dict[str, Deployment] = {}
     for entry in model_list:
         name = text(_get(entry, "model_name"))
         if not name:
@@ -549,11 +569,67 @@ def model_info_from_list(model_list: Sequence[Any]) -> ModelInfo:
         # ("openai/gpt-4.1-mini"); TensorCost wants the provider's own model
         # id beside the provider. Sent with the prefix, governance looked up
         # "openai/openai/gpt-4.1-mini" and refused every approved model.
-        if model and provider and model.lower().startswith(provider.lower() + "/"):
-            model = model[len(provider) + 1 :] or model
+        if model and provider:
+            model = without_provider_prefix(model, provider)
+        # An Azure deployment named "prod-mini-deploy" is priced by its
+        # base_model, as LiteLLM prices it; the name goes beside it.
+        deployment: Optional[str] = None
+        billed = base_model(params, _get(entry, "model_info"))
+        if billed and model:
+            billed = without_provider_prefix(billed, provider)
+            if billed != model:
+                deployment, model = model, billed
         # The first deployment of a name speaks for it.
-        deployments.setdefault(name, (model, provider))
+        deployments.setdefault(name, (model, provider, deployment))
     return names, deployments
+
+
+def _deployment(value: Any) -> Deployment:
+    """A deployments entry, also from a model_info callable that still returns (model, provider)."""
+    if not isinstance(value, tuple):
+        return None, None, None
+    model = value[0] if len(value) > 0 else None
+    provider = value[1] if len(value) > 1 else None
+    deployment = value[2] if len(value) > 2 else None
+    return model, provider, deployment
+
+
+def accepted_models(names: Sequence[str], deployments: Dict[str, Deployment]) -> List[Any]:
+    """accepts_models: each name with its deployment's model and provider, then the bare names.
+
+    A reroute must be answered with a model_name LiteLLM can serve, and an
+    alias ("azure-gpt-5.4-mini") is what most configs use, so each entry
+    pairs the alias (``name``) with the provider's own model id and the
+    provider, spelled as the call's own model and provider go to admit.
+    TensorCost matches the route's target against ``model`` and ``provider``
+    and answers with ``name``.
+
+    The bare names follow, as 0.1.3 sent them, for an older TensorCost that
+    reads only strings: it drops the objects, names them in the answer's
+    ``detail``, and matches the names as before. A wildcard route
+    ("bedrock/*") names no one model, so it goes only as a bare name.
+    """
+    described: List[Dict[str, str]] = []
+    for name in names:
+        model, provider, deployment = _deployment(deployments.get(name))
+        if not model or "*" in name or "*" in model:
+            continue
+        entry = {"name": name, "model": model}
+        if provider:
+            entry["provider"] = provider
+        if deployment:
+            entry["deployment"] = deployment
+        described.append(entry)
+        if len(described) >= MAX_MODELS:
+            break
+    return [*described, *list(names)[:MAX_MODELS]]
+
+
+def _servable(target: str, names: Sequence[str]) -> bool:
+    """Whether the proxy's model_list can serve ``target``; true when the list couldn't be read."""
+    if not names or target in names:
+        return True
+    return any("*" in name and fnmatch.fnmatchcase(target, name) for name in names)
 
 
 def _litellm_token_counter() -> Optional[Callable[..., int]]:

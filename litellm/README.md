@@ -76,8 +76,30 @@ Guardrail settings, all optional:
 The call's callers (the key's team id, user id and key alias, and any
 request tags), the model and its provider as the proxy's `model_list` names
 them, the application (below), `max_tokens` (or `max_completion_tokens`),
-the prompt's token count, whether it streams, and the model names in
-`model_list` as the models a reroute may pick. It never sends the prompt.
+the prompt's token count, whether it streams, and the models in
+`model_list` a reroute may pick. It never sends the prompt.
+
+Those go as `accepts_models`, one entry per `model_name` with the
+deployment it routes to, then the bare names:
+
+```json
+"accepts_models": [
+  {"name": "azure-gpt-5.4-mini", "model": "gpt-5.4-mini", "provider": "azure"},
+  {"name": "claude-haiku", "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0", "provider": "bedrock"},
+  "azure-gpt-5.4-mini",
+  "claude-haiku"
+]
+```
+
+An entry for a deployment with a `base_model` (below) carries the base model
+as `model` and the deployment's own name as `deployment`. TensorCost matches a
+routing policy's target model against each entry's `model` and `provider`, and answers a reroute with the entry's `name`, so a
+`model_name` can be any alias you like. Up to 0.1.3 the guardrail sent only
+the names, and a reroute fired only when a `model_name` was spelled like the
+target model. The bare names are still sent for a TensorCost that reads only
+strings; it drops the objects (the answer's `detail` names them as ignored)
+and matches the names as before. A wildcard route (`bedrock/*`) goes only as
+a bare name.
 
 It also mints a correlation id for the call, puts it in the request's
 metadata under `tensorcost_correlation_id` (over any value the caller sent),
@@ -149,8 +171,10 @@ skipped for the next. A cached allow is kept per application.
   `compliance_denied`, `run_stopped`) is a 403
   `{"error": {"type": "permission_denied", "reason": ...}}`, so a client
   doesn't back off and retry a call that can never pass.
-- **reroute**: `model` is set to the model TensorCost names. The decision
-  covers that one attempt.
+- **reroute**: `model` is set to the `model_name` TensorCost names. The
+  decision covers that one attempt. A name that isn't in `model_list` (and
+  no wildcard route matches) would fail the call, so the call runs as asked
+  instead and the guardrail logs a warning.
 
 Every answered decision is an HTTP 200. Anything else means TensorCost
 failed, and the fail mode decides.
@@ -204,6 +228,35 @@ set it with the `x-litellm-call-id` header.
 LiteLLM's router retries and fallbacks run inside one checked call. Each
 attempt is logged as its own row and its spend counted.
 
+## Azure deployments named your own way
+
+An Azure OpenAI deployment carries the name you gave it (`prod-mini-deploy`),
+not the model behind it, and no price list knows that name. Set `base_model`
+on the deployment, which LiteLLM's own Azure docs ask for so that LiteLLM can
+price the call too:
+
+```yaml
+model_list:
+  - model_name: chat-mini
+    litellm_params:
+      model: azure/prod-mini-deploy
+      api_base: https://acme.openai.azure.com
+      api_key: os.environ/AZURE_API_KEY
+    model_info:
+      base_model: azure/gpt-4o-mini
+```
+
+LiteLLM also reads `base_model` under `litellm_params`, and that one wins when
+both are set; the guardrail and the logger read it the same way. With it set,
+the call goes to admit as `gpt-4o-mini` (priced, budgeted, governed and
+routed as that model), its spend row's model is `azure/gpt-4o-mini`, and the
+deployment's own name goes beside it as `deployment` in both, so it still
+shows on the row. A model approved in TensorCost under the deployment's name
+before you set `base_model` stays approved. A budget scoped to the deployment's
+name doesn't follow: scope it to the model instead. Without `base_model`
+nothing changes, and the call is checked and recorded under the deployment's
+name.
+
 ## Spend rows
 
 The logger sends LiteLLM's spend-log row shape: `request_id`, the provider's
@@ -216,8 +269,9 @@ whether it says a budget was exceeded, or that LiteLLM had no model by the
 name asked for).
 
 The model is the deployment LiteLLM's router picked (`azure/gpt-5.4` for a
-`model_name: azure-gpt-5.4` entry), and the name the caller asked for goes
-beside it as `model_group`. TensorCost reads the provider from the
+`model_name: azure-gpt-5.4` entry), or the deployment's `base_model` when its
+config names one (below), and the name the caller asked for goes beside it as
+`model_group`. TensorCost reads the provider from the
 deployment's prefix and api base, so a `model_list` alias such as `prod-chat`
 or `cheap` is never a model of record. A call LiteLLM couldn't resolve (its
 400 "Invalid model name passed in") reached no provider: TensorCost reads its

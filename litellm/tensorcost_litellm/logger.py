@@ -20,7 +20,9 @@ up to HOLD_FAILURE_SECONDS for the call to finish before it goes. Every other
 row of the call goes without it. The id is sent only when this process's
 guardrail minted it, never one a caller put in their own metadata.
 
-A row also carries the provider's response id as ``id``, model, tokens,
+A row also carries the provider's response id as ``id``, model (the
+deployment's ``base_model`` when its config names one, with the deployment's
+own name as ``deployment``), tokens,
 cache tokens, LiteLLM's cost, timing, the team, user and key alias, tags,
 and a failure's error class and code, the end customer the caller named
 under ``tensorcost_customer`` in the request's metadata, and the application
@@ -74,6 +76,7 @@ from ._shared import (
     CUSTOMER_METADATA_KEY,
     KEY_ENV,
     auth_headers,
+    base_model,
     base_url,
     calls,
     non_negative_int,
@@ -500,10 +503,12 @@ def spend_row(kwargs: dict, response_obj: Any, start_time: Any, end_time: Any, f
     if application:
         metadata[APPLICATION_METADATA_KEY] = application
 
+    model, deployment = _billed_model(kwargs, text(slp.get("model")))
     row: Dict[str, Any] = {
         # Minted here, once per logged event: the dedupe key no caller can set.
         "request_id": str(uuid.uuid4()),
-        "model": text(slp.get("model")),
+        "model": model,
+        "deployment": deployment,
         "model_group": text(slp.get("model_group")),
         "api_base": text(slp.get("api_base"), 2000),
         "status": status,
@@ -532,6 +537,25 @@ def spend_row(kwargs: dict, response_obj: Any, start_time: Any, end_time: Any, f
     if usage:
         row["usage_object"] = usage
     return {k: v for k, v in row.items() if v is not None}
+
+
+def _billed_model(kwargs: dict, logged: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """The row's model and, when they differ, the deployment's own name.
+
+    LiteLLM logs the deployment ("azure/prod-mini-deploy"), which no price
+    list knows. When the deployment's config names a base_model, that is the
+    model, as the guardrail sent it to admit and as LiteLLM priced the call;
+    it keeps the deployment's routing prefix ("azure/gpt-4o-mini"), so the
+    row's provider reads as before. Without one the row is as it always was.
+    """
+    billed = base_model(kwargs.get("litellm_params"))
+    if not billed or not logged:
+        return logged, None
+    prefix = logged.split("/", 1)[0] if "/" in logged else None
+    if prefix and "/" not in billed:
+        billed = f"{prefix}/{billed}"
+    billed = text(billed) or logged
+    return (billed, logged) if billed != logged else (logged, None)
 
 
 def _without_correlation(row: Dict[str, Any]) -> Dict[str, Any]:

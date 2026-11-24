@@ -7,4 +7,19 @@ model_list:
       model: openai/gpt-4o-mini
       api_key: sk-not-a-real-key
       mock_response: "Hello from the mock model."
-
+  # An alias spelled unlike its model, as customers name them: the reroute
+  # leg sends the call here, and its spend row must name the model.
+  - model_name: ci-mini
+    litellm_params:
+      model: openai/gpt-4o-mini-2024-07-18
+      api_key: sk-not-a-real-key
+      mock_response: "Hello from the rerouted model."
+  # A deployment with a name of its own and a base_model, as Azure configs
+  # are: admit and the spend row name gpt-4o-mini, with the name beside it.
+  - model_name: ci-named
+    litellm_params:
+      model: openai/ci-named-deploy
+      api_key: sk-not-a-real-key
+      mock_response: "Hello from the named deployment."
+    model_info:
+      base_model: openai/gpt-4o-mini
