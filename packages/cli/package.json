@@ -1,7 +1,7 @@
 {
   "name": "@tensorcost/cli",
   "version": "0.2.7",
-  "description": "TensorCost CLI — estimate and compare LLM prompt costs, and audit an AI bill on your own machine.",
+  "description": "TensorCost CLI — estimate and compare LLM prompt costs from the command line.",
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
@@ -53,7 +53,6 @@
     "lint": "echo 'no lint configured'"
   },
   "devDependencies": {
-    "@tensorcost/bill-audit": "workspace:*",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^3.2.6",
     "esbuild": "^0.25.12",

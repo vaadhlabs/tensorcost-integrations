@@ -1,8 +1,8 @@
 # TensorCost integrations
 
 Open-source pieces of TensorCost that sit in a customer's request path or define
-how others talk to us: gateway integrations, the counted-once specification, the
-CLI and the OpenTelemetry package.
+how others talk to us: gateway integrations, the admit protocol, the CLI and the
+OpenTelemetry package.
 
 - `litellm/`: a LiteLLM proxy guardrail that checks TensorCost budgets
   before each call, and a logger that reports each call's spend back
@@ -30,4 +30,5 @@ of an allowlist of paths. Its history starts at the first export.
 
 Repository: https://github.com/vaadhlabs/tensorcost-integrations
 
-Code is Apache-2.0. Specifications are CC-BY-4.0.
+Code is Apache-2.0. The admit specification's prose is CC-BY-4.0, see
+spec/LICENSE.md.

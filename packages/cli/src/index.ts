@@ -1,20 +1,17 @@
 #!/usr/bin/env node
 /**
- * tensorcost CLI — estimate and compare LLM prompt costs from the command line,
- * and audit a provider bill on your own machine.
+ * tensorcost CLI — estimate and compare LLM prompt costs from the command line.
  *
  * Usage:
  *   tensorcost estimate --prompt-file <path> --model <id>
  *   tensorcost compare  --baseline-file <path> --candidate-file <path> --model <id>
  *   tensorcost models
- *   tensorcost audit <usage-export> --invoice <file-or-amount>
  *   tensorcost --version
  */
 
 import { runEstimate } from "./commands/estimate.js";
 import { runCompare } from "./commands/compare.js";
 import { runModels } from "./commands/models.js";
-import { runAudit } from "./commands/audit.js";
 import { loadModelRates } from "./pricing.js";
 
 const VERSION = "0.2.7";
@@ -31,7 +28,6 @@ Subcommands:
   estimate    Estimate cost for a single prompt or all models in a provider
   compare     Compare cost between a baseline and a candidate prompt
   models      List known models and their current rates
-  audit       Audit a provider bill. Runs on this machine; files are never uploaded
 
 Global flags:
   --json      Output machine-readable JSON instead of human-readable text
@@ -61,31 +57,6 @@ models options:
   --tier latest                    Only current-generation models
   --include-legacy                 Include deprecated models (claude-2, claude-instant, …)
   --json                           Output the full catalogue as JSON
-
-audit options:
-  tensorcost audit <usage-export> [--invoice <file-or-amount>]
-  tensorcost audit openai=a.csv anthropic=b.csv --invoice openai=1842.00
-
-  <usage-export>                   CSV with a cost or credits column, a GitHub Copilot AI
-                                   usage report, a Claude spend report, or JSON saved from
-                                   the Cursor Admin API or Claude Code Analytics API.
-                                   Repeat for more exports; name=path names a provider
-  --invoice [name=]<file-or-amount>  Invoice total to compare against. Repeat to add up
-                                   several invoices for one provider
-  --window 30|90                   Days the export covers, recorded in --json (default: 90)
-  --json                           Output the full audit as JSON
-
-  Show AI spend counted twice across inputs that hold the same calls:
-  tensorcost audit --export litellm=spendlogs.csv --export bedrock-invocations=invocations.jsonl \\
-    --export bedrock-cur=focus.csv --invoice anthropic=1234.56
-
-  --export name=path               litellm (LiteLLM spend-log CSV), bedrock-invocations
-                                   (Bedrock invocation log, JSON lines) or bedrock-cur
-                                   (AWS FOCUS export, CSV; Parquet isn't read)
-
-  Your files are read here and nothing is sent anywhere. The one network call is the
-  public price catalogue, fetched only to price a Bedrock invocation log
-  (TENSORCOST_OFFLINE=1 uses the bundled prices).
 `.trim();
 
 function parseArgv(argv: string[]): {
@@ -134,13 +105,6 @@ async function main(): Promise<void> {
   if (flags["help"] === true || flags["h"] === true || subcommand === null) {
     process.stdout.write(HELP + "\n");
     process.exit(0);
-  }
-
-  // Audit leaves before the rate catalogue loads. It fetches the catalogue
-  // itself, and only to price a Bedrock invocation log.
-  if (subcommand === "audit") {
-    await runAudit(process.argv.slice(process.argv.indexOf("audit") + 1));
-    return;
   }
 
   // Merge live/cached rates into the in-process pricing map before dispatching

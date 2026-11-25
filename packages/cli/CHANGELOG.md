@@ -4,12 +4,6 @@ All notable changes to `@tensorcost/cli` are documented here.
 
 ## [Unreleased]
 
-### Added
-
-- `audit` — the five-line bill audit, computed locally from a usage export and an invoice total. Makes no network calls. Reads generic usage CSVs, the GitHub Copilot AI usage report, the Claude spend report, and JSON from the Cursor Admin API and Claude Code Analytics API, with spend by tool and by person when an export names people.
-
-- `audit --export litellm=… --export bedrock-invocations=… --export bedrock-cur=…` — a "Counted twice" section: the dollars that appear in more than one input for the same calls, by pair of inputs, next to the total counted once. Fetches the public price catalogue only to price a Bedrock invocation log.
-
 ### Changed
 
 - The published package is a single bundled `dist/index.js`, still with no runtime dependencies.

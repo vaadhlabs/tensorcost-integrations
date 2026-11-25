@@ -1,10 +1,8 @@
 /**
  * Post-build tasks:
- *   1. Bundle src/index.ts into dist/index.js. @tensorcost/bill-audit is an
- *      internal package and the Homebrew formula installs from the tarball with
- *      no dependency step, so the published CLI has to carry that code itself.
- *      Bundling from source, not from tsc's output, means a change to the
- *      bill-audit package can never ship stale.
+ *   1. Bundle src/index.ts into dist/index.js. The Homebrew formula installs
+ *      from the tarball with no dependency step, so the published CLI is one
+ *      file with no runtime dependencies.
  *   2. Prepend #!/usr/bin/env node shebang to dist/index.js and chmod +x it.
  *   3. Copy src/pricing/models.json → dist/pricing/models.json so the
  *      createRequire call in the bundle can resolve it at runtime.
@@ -27,9 +25,6 @@ await build({
   format: "esm",
   target: "node18",
   logLevel: "warning",
-  alias: {
-    "@tensorcost/bill-audit": join(root, "../bill-audit/src/index.ts"),
-  },
 });
 console.log("postbuild: bundled src/index.ts → dist/index.js");
 

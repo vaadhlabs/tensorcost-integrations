@@ -11,6 +11,5 @@
     "src/**/*.spec.ts",
     "src/**/*.test.ts",
     "src/**/__tests__/**"
-  ],
-  "references": [{ "path": "../bill-audit" }]
+  ]
 }

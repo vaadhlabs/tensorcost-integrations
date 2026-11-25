@@ -1,17 +1,8 @@
-import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 const isIntegration = process.env["INTEGRATION"] === "1";
 
 export default defineConfig({
-  // The release job tests before it builds, so read the bundled package from source.
-  resolve: {
-    alias: {
-      "@tensorcost/bill-audit": fileURLToPath(
-        new URL("../bill-audit/src/index.ts", import.meta.url),
-      ),
-    },
-  },
   test: {
     environment: "node",
     // Default run (pnpm test) skips integration tests — they require a prior

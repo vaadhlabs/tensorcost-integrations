@@ -1,6 +1,6 @@
 # @tensorcost/cli
 
-Estimate and compare LLM prompt costs from the command line, and audit an AI bill on your own machine. Works offline with a bundled seed catalogue; when online, refreshes from TensorCost's public CloudFront snapshot (no API key required). `audit` never goes online.
+Estimate and compare LLM prompt costs from the command line. Works offline with a bundled seed catalogue; when online, refreshes from TensorCost's public CloudFront snapshot (no API key required).
 
 ```
 npx @tensorcost/cli estimate --prompt-file prompts/rerank.v3.txt \
@@ -115,78 +115,12 @@ tensorcost models --provider openai
 tensorcost models --json
 ```
 
-### `audit`
-
-Reads a usage export and your invoice total, and prints five numbers a provider's spend cap and dashboard don't show. **It runs on your machine and your files go nowhere.** It makes no network calls, with one exception: pricing a Bedrock invocation log fetches TensorCost's public price catalogue (set `TENSORCOST_OFFLINE=1` to use the bundled prices instead). The test suite runs the built binary with a trap on every network call to hold it to that.
-
-```bash
-npx @tensorcost/cli audit usage.csv --invoice invoice.csv
-```
-
-The five numbers:
-
-1. **The run your cap did not see:** the largest single run, and its share of spend.
-2. **Spend with no owner:** spend that can't be tied to a person, agent or run.
-3. **Price paid, not list:** the invoice against the usage export.
-4. **Capitalisation-ready share (estimate):** spend carrying a project, team or cost-centre tag. Not tax or accounting advice.
-5. **Cost per attempt:** per agent, when the export has an agent id.
-
-When an export names people, the audit also lists spend by tool and by person.
-
-| Flag | Description |
-|------|-------------|
-| `<usage-export>` | The export to audit. Repeat for several. `name=path` names the provider, for example `openai=usage.csv` |
-| `--invoice [name=]<file-or-amount>` | Invoice total, as an amount or a text/CSV file. PDFs aren't read, so pass the total. Repeat to add up several invoices for one provider |
-| `--window 30\|90` | Days the export covers, recorded in `--json` (default 90). It doesn't filter the file |
-| `--json` | Output the full audit as JSON |
-
-```bash
-tensorcost audit openai=openai.csv anthropic=anthropic.csv \
-  --invoice openai=1842.00 --invoice anthropic=invoice.csv
-```
-
-**Counted twice**
-
-One call can sit in a gateway log, a provider export and a bill. Name those inputs and the audit shows the dollars that appear in more than one, by pair of inputs, with the total counted once next to the total added up:
-
-```bash
-tensorcost audit \
-  --export litellm=spendlogs.csv \
-  --export bedrock-invocations=invocations.jsonl \
-  --export bedrock-cur=focus.csv \
-  --invoice anthropic=1234.56
-```
-
-| Input | What it is |
-|-------|------------|
-| `litellm` | LiteLLM spend-log CSV. Calls are matched on its `id` column, the provider's response id |
-| `bedrock-invocations` | Bedrock's model invocation log, JSON lines. Calls are matched on `requestId` and priced from the catalogue (cache reads aren't priced) |
-| `bedrock-cur` | AWS FOCUS export as CSV (`BilledCost`, Bedrock rows). Parquet isn't read. Listed as a bill, not matched against calls |
-
-Two rows are one call when they share a provider response id. A gateway row and an invocation-log row for one call are matched only that way. Bills, and invoices given with `--invoice`, are listed beside the calls and not netted against them.
-
-**What it reads**
-
-| Export | Where it comes from | Cost shown | People | Runs |
-|--------|---------------------|------------|--------|------|
-| Any usage CSV | Your provider. Needs a cost or credits column; `run_id`/`session_id`, `agent_id` and `project`/`team`/`cost_center` columns are used when present | As exported | No | Yes, if present |
-| GitHub Copilot | The **AI usage report** from your billing settings | Billed (`net_amount`) | Yes | No |
-| Claude Team or Enterprise | **Export spend report** in the analytics dashboard | Billed (`total_net_spend_usd`) | Yes | No |
-| Claude Code on a Console org | Saved JSON from `GET /v1/organizations/usage_report/claude_code` | **Estimated** at list price | Yes | No |
-| Cursor | Saved JSON from the Admin API, `POST /teams/filtered-usage-events` or `POST /teams/spend` | Billed (`chargedCents`, `spendCents`) | Yes | `conversationId`, events only |
-
-The Claude Code endpoint returns one day per call and Cursor's returns pages. Save each response on its own line in one file, or as a JSON array of responses, and the audit reads them all.
-
-Cursor's dashboard CSV isn't read, because its columns aren't documented. GitHub's docs list the report's fields without naming the file format or the currency of the amounts; the audit assumes CSV and USD. The file's dates aren't checked against your invoice, so compare the same period.
-
-GitHub reports usernames and the other vendors report emails, so one person using Copilot and Cursor appears twice. Nothing in the files links the two, and the audit doesn't guess.
-
 ## Model catalogue
 
 The CLI does **not** hardcode the full provider catalogue. On each run it:
 
 1. Starts from a small bundled seed (`models.json`) so offline / CI works with zero network.
-2. Merges the daily CloudFront snapshot at `https://console.tensorcost.com/cli/model-rates.json` (TensorCost `ai.model_pricing` + LiteLLM gap-fill), cached for 1 hour at `~/.tensorcost/rates-cache.json`.
+2. Merges the daily CloudFront snapshot at `https://console.tensorcost.com/cli/model-rates.json` (TensorCost's own rates, with LiteLLM's catalogue filling the gaps), cached for 1 hour at `~/.tensorcost/rates-cache.json`.
 
 Use full ids (`openai/gpt-4o`). Bare slugs (`gpt-4o`) resolve when unique; if several providers match, the CLI lists the candidates and exits.
 

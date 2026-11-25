@@ -17,19 +17,6 @@ jobs:
       - uses: actions/checkout@v4
       - run: ls
 
-  counted-once:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: spec/counted-once
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm install
-      - run: npx vitest run
-
   # The APIM policy fragments, read with the standard library.
   azure-apim:
     runs-on: ubuntu-latest
