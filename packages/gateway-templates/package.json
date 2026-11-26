@@ -1,0 +1,65 @@
+{
+  "name": "@tensorcost/gateway-templates",
+  "version": "0.1.0",
+  "description": "Renders the TensorCost gateway templates (Azure APIM policy fragments, Apigee shared flows, the LiteLLM config) for your own TensorCost URL and fail mode.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "tensorcost-gateway-templates": "./dist/cli.js"
+  },
+  "sideEffects": [
+    "./dist/cli.js"
+  ],
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "!dist/**/__tests__",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "reference": "node dist/cli.js reference --out ../..",
+    "reference:check": "node dist/cli.js reference --out ../.. --check",
+    "prepublishOnly": "pnpm build && pnpm test && node ../../tools/guard.mjs --pack ."
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.6"
+  },
+  "keywords": [
+    "tensorcost",
+    "llm",
+    "gateway",
+    "azure-apim",
+    "apigee",
+    "litellm",
+    "budget"
+  ],
+  "homepage": "https://github.com/vaadhlabs/tensorcost-integrations/tree/main/packages/gateway-templates",
+  "bugs": "https://github.com/vaadhlabs/tensorcost-integrations/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vaadhlabs/tensorcost-integrations.git",
+    "directory": "packages/gateway-templates"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

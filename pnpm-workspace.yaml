@@ -1,5 +1,7 @@
 packages:
+  - spec/admit
   - packages/cli
   - packages/otel-genai-cost
+  - packages/gateway-templates
   - admit-mock
   - admit-conformance
