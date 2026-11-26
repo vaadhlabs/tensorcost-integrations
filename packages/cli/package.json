@@ -1,6 +1,6 @@
 {
   "name": "@tensorcost/cli",
-  "version": "0.2.7",
+  "version": "0.3.0",
   "description": "TensorCost CLI — estimate and compare LLM prompt costs from the command line.",
   "license": "Apache-2.0",
   "type": "module",
@@ -23,9 +23,6 @@
     "CHANGELOG.md",
     "LICENSE"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "engines": {
     "node": ">=18.0.0"
   },
@@ -41,7 +38,6 @@
     "pricing"
   ],
   "author": "Vaadh Labs / TensorCost <engineering@tensorcost.com>",
-  "homepage": "https://tensorcost.com",
   "scripts": {
     "build": "tsc -b && node tools/postbuild.mjs",
     "dev": "tsc -b --watch",
@@ -49,7 +45,7 @@
     "test": "vitest run --coverage",
     "test:integration": "INTEGRATION=1 vitest run --coverage",
     "test:all": "pnpm test && pnpm test:integration",
-    "prepublishOnly": "pnpm build && pnpm test:all",
+    "prepublishOnly": "pnpm build && pnpm test:all && node ../../tools/guard.mjs --pack .",
     "lint": "echo 'no lint configured'"
   },
   "devDependencies": {
@@ -58,5 +54,16 @@
     "esbuild": "^0.25.12",
     "typescript": "^5.6.0",
     "vitest": "^3.2.6"
+  },
+  "homepage": "https://github.com/vaadhlabs/tensorcost-integrations/tree/main/packages/cli",
+  "bugs": "https://github.com/vaadhlabs/tensorcost-integrations/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vaadhlabs/tensorcost-integrations.git",
+    "directory": "packages/cli"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

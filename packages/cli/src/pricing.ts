@@ -125,19 +125,17 @@ export function estimateCost(
 }
 
 // ---------------------------------------------------------------------------
-// Live-rates loader — CloudFront catalogue snapshot
+// Live-rates loader — the published rate catalogue
 // ---------------------------------------------------------------------------
-// Fetches the daily-published catalogue from CloudFront (S3 FrontendBucket
-// object cli/model-rates.json) and merges into the in-process map. Uses a
-// 1-hour on-disk cache at ~/.tensorcost/rates-cache.json.
+// Fetches TensorCost's daily-published rate catalogue and merges it into the
+// in-process map. Uses a 1-hour on-disk cache at ~/.tensorcost/rates-cache.json.
 //
-// No API key required — the object is public list pricing. Every failure
-// path (offline flag, network error, HTML SPA fallback, FS permission)
-// falls back silently to the bundled table.
+// No API key required — the catalogue is public list pricing. Every failure
+// path (offline flag, network error, an HTML page instead of JSON, FS
+// permission) falls back silently to the bundled table.
 
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
-const DEFAULT_CATALOG_URL_PROD =
-  "https://console.tensorcost.com/cli/model-rates.json";
+const DEFAULT_CATALOG_URL = "https://console.tensorcost.com/cli/model-rates.json";
 const FETCH_TIMEOUT_MS = 3_000;
 
 function ratesCachePath(): string {
@@ -145,13 +143,7 @@ function ratesCachePath(): string {
 }
 
 function defaultCatalogUrl(): string {
-  const explicit = process.env["TENSORCOST_CATALOG_URL"]?.trim();
-  if (explicit) return explicit;
-  const instance = process.env["TENSORCOST_INSTANCE"]?.trim();
-  if (instance && instance !== "prod") {
-    return `https://console.${instance}.tensorcost.com/cli/model-rates.json`;
-  }
-  return DEFAULT_CATALOG_URL_PROD;
+  return process.env["TENSORCOST_CATALOG_URL"]?.trim() || DEFAULT_CATALOG_URL;
 }
 
 function isValidUsdPerMillion(n: number): boolean {
@@ -335,8 +327,8 @@ export async function loadModelRates(opts?: LoadModelRatesOptions): Promise<void
       return;
     }
 
-    // CloudFront may return the SPA HTML shell on a missing object (403→200
-    // CustomErrorResponse). Reject anything that isn't schema_version-2 JSON.
+    // A static host may answer a missing object with an HTML page and a 200.
+    // Reject anything that isn't schema_version-2 JSON.
     const contentType = res.headers.get("content-type") ?? "";
     if (contentType.includes("text/html")) {
       if (cached) applyRemoteCatalog(cached.data);
