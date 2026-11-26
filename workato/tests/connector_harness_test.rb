@@ -9,6 +9,7 @@
 require "json"
 require "minitest/autorun"
 require "securerandom"
+require "uri"
 
 ROOT = File.expand_path("..", __dir__)
 
