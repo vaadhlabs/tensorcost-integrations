@@ -1,7 +1,7 @@
 {
   "name": "@tensorcost/admit-mock",
-  "version": "0.1.0",
-  "description": "A local stand-in for TensorCost's gateway admit route, for testing a gateway client against the admit protocol.",
+  "version": "0.2.0",
+  "description": "A local stand-in for TensorCost's gateway admit and log routes, for testing a gateway client against the admit protocol.",
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
@@ -21,7 +21,8 @@
     "node": ">=18.17"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "node ../tools/guard.mjs --pack ."
   },
   "keywords": [
     "tensorcost",
@@ -30,13 +31,18 @@
     "budget",
     "mock"
   ],
-  "homepage": "https://tensorcost.com",
+  "dependencies": {
+    "@tensorcost/admit-spec": "workspace:*"
+  },
+  "homepage": "https://github.com/vaadhlabs/tensorcost-integrations/tree/main/admit-mock",
+  "bugs": "https://github.com/vaadhlabs/tensorcost-integrations/issues",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/vaadhlabs/tensorcost-integrations.git",
     "directory": "admit-mock"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   }
 }

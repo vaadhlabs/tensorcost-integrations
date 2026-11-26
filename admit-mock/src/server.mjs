@@ -136,7 +136,11 @@ export const ROUTES = [
   { method: 'POST', pattern: /^\/v1\/gateway\/headroom$/, operationId: 'gatewayHeadroom' },
   { method: 'POST', pattern: /^\/v1\/gateway\/subscriptions$/, operationId: 'gatewaySubscribe' },
   { method: 'DELETE', pattern: /^\/v1\/gateway\/subscriptions\/([^/]+)$/, operationId: 'gatewayUnsubscribe' },
+  { method: 'POST', pattern: /^\/v1\/gateway\/logs$/, operationId: 'gatewayLogs' },
 ];
+
+/** The most rows one log push may carry. */
+export const LOG_BATCH_MAX = 500;
 
 /** The one budget the mock's headroom answers about: "Search team", $97.00 of a $100.00 hard cap. */
 export const HEADROOM_BUDGET = { id: '7f1c2d3e-0000-4000-8000-00000000b001', name: 'Search team', period: 'month', mode: 'hard_cap', cap_cents: 10000, spent_cents: 9700 };
@@ -177,11 +181,13 @@ export function createMock(options = {}) {
   const cancelOp = spec ? operationSchemas(spec, 'gatewayAdmitCancel') : null;
   const headroomOp = spec ? operationSchemas(spec, 'gatewayHeadroom') : null;
   const subscribeOp = spec ? operationSchemas(spec, 'gatewaySubscribe') : null;
+  const logRow = spec?.components?.schemas?.GatewayLogRow ? { $ref: '#/components/schemas/GatewayLogRow' } : null;
   const now = options.now ?? (() => Date.now());
 
   const holds = new Map();
   const subscriptions = new Map();
-  let log = { admits: [], cancels: [], headrooms: [], subscriptions: [] };
+  const storedRows = new Set();
+  let log = { admits: [], cancels: [], headrooms: [], subscriptions: [], logs: [] };
   const timers = new Set();
 
   function gatewayOf(body) {
@@ -555,6 +561,57 @@ export function createMock(options = {}) {
     res.end();
   }
 
+  // A log push: each format=tensorcost row is checked against GatewayLogRow,
+  // a row that doesn't fit is named in parse_errors and the rest are stored,
+  // and a log_id this key already sent counts as deduped. litellm and
+  // portkey rows are that product's own shape and are stored unread.
+  async function onLogs(req, res, format) {
+    const raw = await readBody(req);
+    const entry = { at: new Date(now()).toISOString(), format, body: null, status: 0, answer: null };
+    log.logs.push(entry);
+    const token = tokenOf(req);
+    if (!token) {
+      entry.status = 401;
+      return send(res, 401, { message: 'Not a live gateway connection key.' });
+    }
+    if (!['tensorcost', 'litellm', 'portkey'].includes(format)) {
+      entry.status = 400;
+      return send(res, 400, { message: 'format must be litellm, portkey or tensorcost' });
+    }
+    let body;
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      body = undefined;
+    }
+    entry.body = body ?? raw;
+    const rows = Array.isArray(body) ? body : body?.logs;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      entry.status = 400;
+      return send(res, 400, { message: 'Send the logs as a JSON array, or as { "logs": [...] }, with at least one row' });
+    }
+    if (rows.length > LOG_BATCH_MAX) {
+      entry.status = 413;
+      return send(res, 413, { message: `A push takes at most ${LOG_BATCH_MAX} rows; this one has ${rows.length}.` });
+    }
+    const answer = { received: rows.length, inserted: 0, deduped: 0, skipped: 0, parse_errors: [] };
+    rows.forEach((row, index) => {
+      if (format === 'tensorcost') {
+        if (row === null || typeof row !== 'object' || Array.isArray(row)) return void answer.parse_errors.push({ index, reason: 'not_an_object' });
+        const errors = logRow ? validate(spec, logRow, row, { at: `logs[${index}]` }) : [];
+        if (errors.length) return void answer.parse_errors.push({ index, reason: errors[0] });
+      }
+      const id = format === 'tensorcost' ? row.log_id : (row?.request_id ?? row?.id ?? JSON.stringify(row));
+      const key = `${token}\u0000${id}`;
+      if (storedRows.has(key)) return void (answer.deduped += 1);
+      storedRows.add(key);
+      answer.inserted += 1;
+    });
+    entry.status = 200;
+    entry.answer = answer;
+    send(res, 200, answer);
+  }
+
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://mock');
     const p = url.pathname;
@@ -565,6 +622,7 @@ export function createMock(options = {}) {
     if (hit?.operationId === 'gatewayHeadroom') return void onHeadroom(req, res).catch(fail);
     if (hit?.operationId === 'gatewaySubscribe') return void onSubscribe(req, res, p.startsWith('/api/inference-proxy/') ? '/api/inference-proxy' : '').catch(fail);
     if (hit?.operationId === 'gatewayUnsubscribe') return void onUnsubscribe(req, res, hit.params[0]).catch(fail);
+    if (hit?.operationId === 'gatewayLogs') return void onLogs(req, res, url.searchParams.get('format')).catch(fail);
     if (req.method === 'GET' && p === '/_mock/log') return send(res, 200, { spec: specPath, ...log });
     if (req.method === 'POST' && p === '/_mock/reset') {
       // Clears the log and the holds; {"fail_mode": "closed"} also switches the workspace's fail mode.
@@ -580,7 +638,7 @@ export function createMock(options = {}) {
         send(res, 200, { reset: true, fail_mode: failMode });
       });
     }
-    send(res, 404, { message: 'admit-mock serves POST /v1/gateway/admit, POST /v1/gateway/admit/{decision_id}/cancel, POST /v1/gateway/headroom, POST /v1/gateway/subscriptions and DELETE /v1/gateway/subscriptions/{id}' });
+    send(res, 404, { message: 'admit-mock serves POST /v1/gateway/admit, POST /v1/gateway/admit/{decision_id}/cancel, POST /v1/gateway/headroom, POST /v1/gateway/subscriptions, DELETE /v1/gateway/subscriptions/{id} and POST /v1/gateway/logs' });
   });
 
   const api = {
@@ -594,8 +652,9 @@ export function createMock(options = {}) {
     },
     reset(mode) {
       if (mode !== undefined) failMode = checkMode(mode);
-      log = { admits: [], cancels: [], headrooms: [], subscriptions: [] };
+      log = { admits: [], cancels: [], headrooms: [], subscriptions: [], logs: [] };
       subscriptions.clear();
+      storedRows.clear();
       holds.clear();
     },
     listen(port = 0, host = '127.0.0.1') {

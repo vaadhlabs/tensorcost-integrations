@@ -21,8 +21,7 @@
         name: "base_url",
         label: "TensorCost API URL",
         optional: false,
-        default: "https://api.tensorcost.com",
-        hint: "Your TensorCost API host. The default is right unless TensorCost gave you another one."
+        hint: "Your TensorCost API URL, e.g. https://tensorcost.example.com. It is the address your TensorCost console shows under Connect > Gateways."
       },
       {
         name: "gateway_key",

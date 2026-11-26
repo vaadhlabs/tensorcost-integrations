@@ -1,0 +1,51 @@
+{
+  "name": "@tensorcost/admit-spec",
+  "version": "0.1.0",
+  "description": "The TensorCost gateway admit protocol: its OpenAPI file, its specification text and example rows.",
+  "license": "Apache-2.0 AND CC-BY-4.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.mjs"
+    },
+    "./openapi.yaml": "./openapi.yaml",
+    "./README.md": "./README.md",
+    "./examples/*": "./examples/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.mjs",
+    "index.d.ts",
+    "openapi.yaml",
+    "README.md",
+    "examples",
+    "LICENSE",
+    "LICENSE.md"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "node ../../tools/guard.mjs --pack ."
+  },
+  "keywords": [
+    "tensorcost",
+    "llm",
+    "gateway",
+    "budget",
+    "openapi"
+  ],
+  "homepage": "https://github.com/vaadhlabs/tensorcost-integrations/tree/main/spec/admit",
+  "bugs": "https://github.com/vaadhlabs/tensorcost-integrations/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vaadhlabs/tensorcost-integrations.git",
+    "directory": "spec/admit"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

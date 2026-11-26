@@ -1,8 +1,9 @@
 # Admit client conformance cases
 
 The cases a gateway client is tested with against `@tensorcost/admit-mock`,
-one for each rule in `spec/admit/README.md` that a client can get wrong.
-Apache-2.0.
+one for each rule in the admit protocol (`@tensorcost/admit-spec`) that a
+client can get wrong. Apache-2.0. Install with
+`npm install --save-dev @tensorcost/admit-conformance @tensorcost/admit-mock`.
 
 `cases.json` holds them in a form any language can read. Each case sets the
 client's fail mode, makes calls through it with a caller id that picks the

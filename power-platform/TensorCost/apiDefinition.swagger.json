@@ -10,7 +10,7 @@
       "email": "support@tensorcost.com"
     }
   },
-  "host": "api.tensorcost.com",
+  "host": "tensorcost.example.com",
   "basePath": "/v1",
   "schemes": ["https"],
   "consumes": ["application/json"],

@@ -16,10 +16,9 @@
       },
       "api_host": {
         "type": "string",
-        "defaultValue": "api.tensorcost.com",
         "uiDefinition": {
           "displayName": "TensorCost API host",
-          "description": "Your TensorCost API host, without https://. api.tensorcost.com unless TensorCost gave you another.",
+          "description": "Your TensorCost installation's host, without https://, as Connect > Gateways shows it (e.g. tensorcost.example.com).",
           "constraints": {
             "tabIndex": 1,
             "clearText": true,

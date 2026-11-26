@@ -4,10 +4,9 @@
 //   1. apiDefinition.swagger.json is OpenAPI 2.0 in the shape Power
 //      Platform reads (paconn validate is the real check, and is a separate
 //      step in the Makefile when it is installed).
-//   2. Every operation's request and answer fit gateway-admit.openapi.yaml,
-//      the admit contract, so the two can't drift. The log push is not in
-//      that contract; its rows are checked against the tensorcost log
-//      format's own field list.
+//   2. Every operation's request and answer fit the admit contract
+//      (@tensorcost/admit-spec, spec/admit/ in this repository), the log
+//      push's rows included, so the two can't drift.
 //   3. The requests a flow would send are replayed against the admit mock on
 //      localhost, which checks them against the contract again and answers
 //      the way TensorCost does.
@@ -41,13 +40,9 @@ const CONTRACT_ROUTE = {
 };
 const LOG_PUSH = { method: 'post', path: '/gateway/logs' };
 
-/**
- * The tensorcost log format's fields, and the ones it refuses a row without. In the
- * TensorCost repository scripts/oss/__tests__/power-platform-log-format.test.mjs
- * checks this list against the parser itself.
- */
-const LOG_FIELDS = ['log_id', 'provider', 'model', 'input_tokens', 'output_tokens', 'cached_input_tokens', 'cache_write_tokens', 'provider_response_id', 'correlation_id', 'started_at', 'ended_at', 'callers', 'gateway_cost_cents', 'status', 'upstream_status', 'customer'];
-const LOG_REQUIRED = ['log_id', 'provider', 'model', 'started_at'];
+/** The tensorcost log format's fields: GatewayLogRow in the contract. */
+const LOG_FIELDS = Object.keys(contract.components.schemas.GatewayLogRow.properties);
+const LOG_REQUIRED = contract.components.schemas.GatewayLogRow.required;
 
 // ------------------------------------------------------------ helpers
 
@@ -272,7 +267,9 @@ test('authentication is an API key in the Authorization header, with "Bearer" in
 test('apiProperties.json: the host is a connection parameter, the capabilities name actions and triggers', () => {
   const p = props.properties;
   assert.ok(p.connectionParameters.api_host, 'a self-hosted TensorCost needs its own host');
-  assert.equal(p.connectionParameters.api_host.defaultValue, swagger.host);
+  assert.equal(p.connectionParameters.api_host.defaultValue, undefined, 'every install has its own host, so there is no default');
+  assert.equal(p.connectionParameters.api_host.uiDefinition.constraints.required, 'true');
+  assert.equal(swagger.host, 'tensorcost.example.com', 'the swagger host is a placeholder the connection replaces');
   const policy = p.policyTemplateInstances.find((t) => t.templateId === 'dynamichosturl');
   assert.ok(policy, 'a dynamichosturl policy');
   assert.match(policy.parameters['x-ms-apimTemplateParameter.urlTemplate'], /^https:\/\/@connectionParameters\('api_host'\)$/);
@@ -374,11 +371,11 @@ test('RecordAiSpend: a row carries only fields the tensorcost log format reads, 
   assert.equal(format['x-ms-visibility'], 'internal');
   const body = bodyOf(op);
   assert.deepEqual(Object.keys(body.properties), ['logs'], 'an array or { logs }, never a bare row');
-  assert.equal(body.properties.logs.maxItems, 500, 'GATEWAY_LOG_BATCH_MAX');
+  assert.equal(body.properties.logs.maxItems, contract.components.schemas.GatewayLogPush.oneOf[1].properties.logs.maxItems, 'the contract\'s batch limit');
   const row = deref(swagger, body.properties.logs.items);
   for (const k of Object.keys(row.properties)) assert.ok(LOG_FIELDS.includes(k), `${k} is not a field of the tensorcost log format`);
   for (const k of LOG_REQUIRED) assert.ok(row.required.includes(k), `a row needs ${k}`);
-  assert.equal(row.properties.log_id.maxLength, 200, 'the parser drops a log_id over 200 characters');
+  assert.equal(row.properties.log_id.maxLength, contract.components.schemas.GatewayLogRow.properties.log_id.maxLength, 'the contract\'s log_id limit');
   assert.equal(row.properties.correlation_id['x-ms-summary'], 'Decision ID', 'correlation_id is the check\'s Decision ID');
 });
 
@@ -528,7 +525,7 @@ test('RecordAiSpend: a sample row fits the connector\'s schema and carries the c
   };
   assert.deepEqual(validate(swagger, op.parameters.find((x) => x.in === 'body').schema, sample, { strict: true }), []);
   const row = sample.logs[0];
-  assert.ok(Object.keys(row).every((k) => LOG_FIELDS.includes(k)));
+  assert.deepEqual(validate(contract, { $ref: '#/components/schemas/GatewayLogRow' }, row, { strict: true }), []);
   const checkCallers = JSON.stringify(callers('Default-1a2b3c'));
   assert.equal(JSON.stringify(row.callers), checkCallers, 'the same callers, kinds and values');
   assert.equal(row.log_id, `pp:${row.correlation_id}`, 'a retry sends the same log_id');

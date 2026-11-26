@@ -1,7 +1,6 @@
 {
   "name": "@tensorcost/admit-conformance",
   "version": "0.1.0",
-  "private": true,
   "description": "Client conformance cases for the TensorCost admit protocol, run against @tensorcost/admit-mock.",
   "license": "Apache-2.0",
   "type": "module",
@@ -14,6 +13,31 @@
     "node": ">=18.17"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "node ../tools/guard.mjs --pack ."
+  },
+  "files": [
+    "lib",
+    "cases.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "tensorcost",
+    "llm",
+    "gateway",
+    "budget",
+    "conformance"
+  ],
+  "homepage": "https://github.com/vaadhlabs/tensorcost-integrations/tree/main/admit-conformance",
+  "bugs": "https://github.com/vaadhlabs/tensorcost-integrations/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vaadhlabs/tensorcost-integrations.git",
+    "directory": "admit-conformance"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

@@ -2,9 +2,10 @@
 // each step's Condition evaluated, each policy run as its XML says, the
 // JavaScript in node:vm. TensorCost and the model target are stubs.
 
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { closedVariant, newEnv, readBundle, runCall, runSharedFlow } from './lib/flow.mjs';
+import { findSpec, loadSpec, validate } from '../../admit-mock/src/openapi.mjs';
 
 const admit = readBundle('tensorcost-admit');
 const usage = readBundle('tensorcost-usage');
@@ -25,13 +26,30 @@ const refuse = (over = {}) => ({
 });
 const json = (status, body, headers = {}) => ({ status, body: JSON.stringify(body), headers });
 
+// Every row any test below makes the flows send, checked against the
+// contract's GatewayLogRow once they have all run.
+const ROWS = [];
+
 /** TensorCost's stub: admit answers `admitAnswer`; logs and cancel answer 200. */
 function tensorcost(admitAnswer) {
   return (req) => {
     if (req.url.endsWith('/v1/gateway/admit')) return typeof admitAnswer === 'function' ? admitAnswer(req) : admitAnswer;
+    if (req.url.includes('/v1/gateway/logs')) ROWS.push(...JSON.parse(req.body));
     return { status: 200, body: '{}' };
   };
 }
+
+after(() => {
+  const spec = loadSpec(findSpec());
+  const row = { $ref: '#/components/schemas/GatewayLogRow' };
+  assert.ok(ROWS.length >= 5, `only ${ROWS.length} rows were sent`);
+  for (const r of ROWS) {
+    assert.deepEqual(validate(spec, row, r), [], JSON.stringify(r));
+    // quota_used_count is the flows' own figure for the product quota; TensorCost ignores it.
+    const extra = Object.keys(r).filter((k) => !(k in spec.components.schemas.GatewayLogRow.properties));
+    assert.deepEqual(extra.filter((k) => k !== 'quota_used_count'), [], JSON.stringify(r));
+  }
+});
 
 const OPENAI_OK = { status: 200, body: JSON.stringify({ id: 'chatcmpl-1', model: 'gpt-4o-2024-08-06', choices: [{ message: { content: 'SECRET ANSWER' } }], usage: { prompt_tokens: 1200, completion_tokens: 300, prompt_tokens_details: { cached_tokens: 200 } } }) };
 const target = (answer = OPENAI_OK) => () => answer;

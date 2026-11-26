@@ -35,7 +35,8 @@ here.
    shown once. An SDK token doesn't work here.
 2. Create a connection of this connector. **Gateway key** is `Bearer `, a
    space, then the key: `Bearer tcgw_...`. **TensorCost API host** is
-   `api.tensorcost.com` unless TensorCost gave you another.
+   your installation's host without `https://`, as Connect > Gateways shows
+   it.
 
 ## Callers
 
