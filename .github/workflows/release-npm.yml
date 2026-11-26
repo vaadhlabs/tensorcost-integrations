@@ -1,0 +1,182 @@
+# Publishes one npm package per tag: <name>-v<version>, for example
+# gateway-templates-v0.1.0 or cli-v0.3.0. The tarball that is tested and
+# checked by the guard is the one uploaded, byte for byte.
+#
+# Publishing uses npm trusted publishing (OIDC) when the package has this
+# workflow as its trusted publisher on npmjs.com, and NPM_TOKEN otherwise
+# (a brand-new package's first publish). The npm environment can carry a
+# required reviewer in GitHub settings.
+name: release-npm
+
+on:
+  push:
+    tags:
+      - "admit-spec-v*"
+      - "admit-mock-v*"
+      - "admit-conformance-v*"
+      - "gateway-templates-v*"
+      - "otel-genai-cost-v*"
+      - "cli-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-npm-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+  HOMEBREW_TAP_REPO: "vaadhlabs/homebrew-tap"
+  HOMEBREW_FORMULA_PATH: "Formula/tc.rb"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      dir: ${{ steps.pkg.outputs.dir }}
+      name: ${{ steps.pkg.outputs.name }}
+      version: ${{ steps.pkg.outputs.version }}
+      tarball: ${{ steps.pack.outputs.tarball }}
+    env:
+      TC_GUARD_PATTERNS: ${{ secrets.OSS_GUARD_PATTERNS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Package for this tag
+        id: pkg
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          case "$tag" in
+            admit-spec-v*)        dir=spec/admit ;;
+            admit-mock-v*)        dir=admit-mock ;;
+            admit-conformance-v*) dir=admit-conformance ;;
+            gateway-templates-v*) dir=packages/gateway-templates ;;
+            otel-genai-cost-v*)   dir=packages/otel-genai-cost ;;
+            cli-v*)               dir=packages/cli ;;
+            *) echo "::error::no package for tag $tag"; exit 1 ;;
+          esac
+          want="${tag##*-v}"
+          have=$(node -p "require('./$dir/package.json').version")
+          name=$(node -p "require('./$dir/package.json').name")
+          [ "$want" = "$have" ] || { echo "::error::tag $want != $dir/package.json $have"; exit 1; }
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$have" >> "$GITHUB_OUTPUT"
+      - name: Install gitleaks
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tgz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm --filter "${{ steps.pkg.outputs.name }}" test
+      - if: steps.pkg.outputs.dir == 'packages/cli'
+        run: pnpm --filter @tensorcost/cli test:integration
+      - name: Pack
+        id: pack
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/pack
+          (cd "${{ steps.pkg.outputs.dir }}" && pnpm pack --pack-destination /tmp/pack)
+          echo "tarball=$(ls /tmp/pack/*.tgz)" >> "$GITHUB_OUTPUT"
+      # The full rules, always: a publish never runs without the private patterns.
+      - name: Guard the tarball
+        run: node tools/guard.mjs --archive "${{ steps.pack.outputs.tarball }}" --require-private --gitleaks
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball
+          path: ${{ steps.pack.outputs.tarball }}
+          retention-days: 3
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tarball
+          path: /tmp/pack
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@11
+      - name: Publish
+        run: npm publish /tmp/pack/*.tgz --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # The CLI also ships through Homebrew and a GitHub release.
+  homebrew:
+    needs: [build, publish]
+    if: needs.build.outputs.dir == 'packages/cli'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tarball
+          path: /tmp/pack
+      - name: Checksum of the published tarball
+        id: sha
+        run: |
+          set -euo pipefail
+          echo "sha256=$(sha256sum /tmp/pack/*.tgz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "url=https://registry.npmjs.org/@tensorcost/cli/-/cli-${{ needs.build.outputs.version }}.tgz" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HOMEBREW_TAP_REPO }}
+          token: ${{ secrets.HOMEBREW_TAP_PAT }}
+          path: homebrew-tap
+      - name: Update the formula
+        run: |
+          set -euo pipefail
+          formula="homebrew-tap/${HOMEBREW_FORMULA_PATH}"
+          mkdir -p "$(dirname "$formula")"
+          cp packages/cli/homebrew/tc.rb "$formula"
+          sed -i \
+            -e "s|TENSORCOST_VERSION_PLACEHOLDER|${{ needs.build.outputs.version }}|g" \
+            -e "s|TENSORCOST_SHA256_PLACEHOLDER|${{ steps.sha.outputs.sha256 }}|g" \
+            -e "s|TENSORCOST_URL_PLACEHOLDER|${{ steps.sha.outputs.url }}|g" \
+            "$formula"
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${HOMEBREW_FORMULA_PATH}"
+          git commit -m "tensorcost ${{ needs.build.outputs.version }}"
+          git push
+
+  github-release:
+    needs: [build, publish]
+    if: needs.build.outputs.dir == 'packages/cli'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tarball
+          path: /tmp/pack
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes=$(awk "/^## \[${VERSION}\]/{f=1;next} /^## \[/{f=0} f" packages/cli/CHANGELOG.md)
+          gh release create "cli-v${VERSION}" --title "TensorCost CLI v${VERSION}" --notes "${notes:-See CHANGELOG.md}" /tmp/pack/*.tgz

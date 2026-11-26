@@ -1,21 +1,131 @@
-# This workflow belongs to the public repository. GitHub does not read
-# integrations/.github/ inside the monorepo, so it never runs there.
+# Every change: the guard, the Node packages, and each integration's own
+# tests. The guard's private patterns come from the OSS_GUARD_PATTERNS secret;
+# a pull request from a fork gets no secrets, so it runs the generic rules
+# only, and the full rules run again when it merges and before any publish.
 name: ci
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  GITLEAKS_VERSION: "8.30.1"
+  # The release's checksum, from gitleaks_8.30.1_checksums.txt.
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+
 jobs:
-  checkout-smoke:
+  guard:
+    runs-on: ubuntu-latest
+    env:
+      TC_GUARD_PATTERNS: ${{ secrets.OSS_GUARD_PATTERNS }}
+      # Required everywhere but a fork's pull request, which can't see the secret.
+      TC_GUARD_REQUIRE_PRIVATE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install gitleaks
+        run: |
+          curl -sSfL -o /tmp/gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tgz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
+      - run: node --test tools/test/*.test.mjs
+      - name: Working tree
+        run: node tools/guard.mjs --gitleaks
+      # A secret committed and removed again inside the pull request is still in its history.
+      - name: Commits in this change
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          else
+            range="${{ github.event.before }}..${{ github.sha }}"
+            git cat-file -e "${{ github.event.before }}^{commit}" 2>/dev/null || range="${{ github.sha }}"
+          fi
+          gitleaks git --no-banner --redact --log-opts="$range" .
+
+  # Every publishable package, packed as it would be published and checked
+  # file by file: the tarball is what reaches npm, not the tree.
+  pack-guard:
+    runs-on: ubuntu-latest
+    env:
+      TC_GUARD_PATTERNS: ${{ secrets.OSS_GUARD_PATTERNS }}
+      TC_GUARD_REQUIRE_PRIVATE: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: npm packages
+        run: |
+          for d in spec/admit admit-mock admit-conformance packages/gateway-templates packages/otel-genai-cost packages/cli; do
+            node tools/guard.mjs --pack "$d"
+          done
+      - name: The LiteLLM plugin's sdist and wheel
+        run: |
+          python -m pip install build
+          python -m build litellm --outdir /tmp/litellm-dist
+          for f in /tmp/litellm-dist/*; do node tools/guard.mjs --archive "$f"; done
+
+  # The Node packages: build, test, and the committed templates against the
+  # renderer that makes them.
+  node:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: ls
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+      - name: CLI, from its built bundle
+        run: pnpm --filter @tensorcost/cli test:integration
+      - name: The committed templates are the renderer's output
+        run: pnpm --filter @tensorcost/gateway-templates reference:check
+
+  # The connectors that aren't npm packages. Node's standard library and the
+  # mock's OpenAPI reader; Workato also runs its Ruby harness.
+  workato:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+      - run: node --test workato/tests/*.test.mjs
+
+  power-platform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test power-platform/tests/*.test.mjs
 
   # The APIM policy fragments, read with the standard library.
   azure-apim:
@@ -131,7 +241,3 @@ jobs:
       - run: python litellm/ci/e2e.py http://localhost:4000 http://localhost:8787
       - if: failure()
         run: docker logs litellm | tail -200
-
-  # One job per integration goes here as each is exported:
-  #   CLI tests
-  #   OpenTelemetry package
