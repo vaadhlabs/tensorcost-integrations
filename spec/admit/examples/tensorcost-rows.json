@@ -1,0 +1,57 @@
+{
+  "description": "One format=tensorcost row as each integration in this repository writes it. Every row validates against GatewayLogRow in openapi.yaml; the integrations' own tests check the rows they really send.",
+  "rows": {
+    "apigee": {
+      "log_id": "rrt-1a2b3c4d5e6f-0001",
+      "correlation_id": "rrt-1a2b3c4d5e6f-0001",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "input_tokens": 1200,
+      "output_tokens": 300,
+      "cached_input_tokens": 200,
+      "cache_write_tokens": 0,
+      "provider_response_id": "chatcmpl-1",
+      "started_at": "2026-11-16T09:30:00.000Z",
+      "ended_at": "2026-11-16T09:30:01.400Z",
+      "callers": [
+        { "kind": "app", "id": "dev-uuid-1/search-bot" },
+        { "kind": "developer", "id": "dev-uuid-1" },
+        { "kind": "product", "id": "search-product" }
+      ],
+      "status": 200,
+      "upstream_status": 200
+    },
+    "workato": {
+      "log_id": "wk:3f0b7c2e-9a51-4d6e-8f43-2a7c1e5b9d10",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5",
+      "input_tokens": 1800,
+      "output_tokens": 412,
+      "cached_input_tokens": 600,
+      "provider_response_id": "msg_01Abc",
+      "correlation_id": "3f0b7c2e-9a51-4d6e-8f43-2a7c1e5b9d10",
+      "started_at": "2026-11-14T09:30:00Z",
+      "ended_at": "2026-11-14T09:30:04Z",
+      "callers": [
+        { "kind": "team", "id": "search" },
+        { "kind": "user", "id": "ana@acme.com" },
+        { "kind": "key", "id": "recipes-prod" }
+      ],
+      "status": "success"
+    },
+    "power-platform": {
+      "log_id": "pp:7c1e5b9d-3f0b-4d6e-9a51-2a7c8f431d10",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "input_tokens": 1200,
+      "output_tokens": 300,
+      "started_at": "2026-11-16T09:30:00Z",
+      "correlation_id": "7c1e5b9d-3f0b-4d6e-9a51-2a7c8f431d10",
+      "callers": [
+        { "kind": "environment", "id": "Default-1a2b3c" },
+        { "kind": "user", "id": "ana@acme.com" },
+        { "kind": "tag", "id": "team=search" }
+      ]
+    }
+  }
+}

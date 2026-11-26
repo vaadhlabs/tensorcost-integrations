@@ -2,7 +2,8 @@
 
 A local server that answers TensorCost's gateway admit route the way
 TensorCost does, so you can test a gateway client without a TensorCost
-workspace. The protocol is `spec/admit/README.md` in this repository.
+workspace. The protocol is `@tensorcost/admit-spec` (`spec/admit/` in this
+repository), which this package depends on for its OpenAPI file.
 
 Apache-2.0. Node 18.17 or later, no dependencies.
 
@@ -15,8 +16,13 @@ node admit-mock/bin/admit-mock.mjs --port 8787
 Point the client at `http://127.0.0.1:8787` with any bearer token (or only the
 one given with `--key`). The mock serves `POST /v1/gateway/admit`,
 `POST /v1/gateway/admit/{decision_id}/cancel`, `POST /v1/gateway/headroom`,
-`POST /v1/gateway/subscriptions` and `DELETE /v1/gateway/subscriptions/{id}`,
-each also under `/api/inference-proxy`.
+`POST /v1/gateway/subscriptions`, `DELETE /v1/gateway/subscriptions/{id}`
+and `POST /v1/gateway/logs`, each also under `/api/inference-proxy`.
+
+A log push with `format=tensorcost` checks each row against `GatewayLogRow`:
+rows that fit are stored, the rest are named in `parse_errors`, and a `log_id`
+the same key sent before counts as `deduped`. `litellm` and `portkey` rows are
+stored unread. `GET /_mock/log` lists the pushes under `logs`.
 
 Headroom answers about one budget, "Search team", a $100.00 hard cap with
 $97.00 spent: `allowed` is true while `estimate_cents` is 300 or less. A
@@ -81,10 +87,10 @@ OpenAPI file (`request_errors`, `response_errors`). `POST /_mock/reset`
 clears the log, the holds and the subscriptions; with `{"fail_mode": "closed"}` it also switches
 the fail mode.
 
-The mock finds the OpenAPI file at `spec/admit/openapi.yaml` when it runs from
-this repository, or wherever `TENSORCOST_ADMIT_OPENAPI` or `--openapi` points.
-Installed on its own from npm it has no copy and checks nothing unless you
-give it one.
+The mock reads the OpenAPI file from `@tensorcost/admit-spec`, which it
+depends on, so an install from npm checks requests and answers against the
+same contract a checkout does. `TENSORCOST_ADMIT_OPENAPI` or `--openapi`
+points it at another file, for instance a newer draft of the spec.
 
 ## Tests
 

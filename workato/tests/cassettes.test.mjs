@@ -1,21 +1,20 @@
 // Checks the recorded cassettes against the admit contract, and runs the
-// stand-alone Ruby harness when Ruby is installed. Standard-library Node only:
-// it needs no gem and no Workato SDK.
+// stand-alone Ruby harness when Ruby is installed. Standard-library Node and
+// the admit mock's OpenAPI reader from this repository: no gem and no
+// Workato SDK.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { findSpec, loadSpec, validate } from '../../admit-mock/src/openapi.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
 const CASSETTES = path.join(ROOT, 'fixtures/vcr_cassettes');
-// In this repository the contract sits with its source; in the public one next to the protocol text.
-const SPEC = [
-  path.resolve(ROOT, '../spec/admit/openapi.yaml'),
-  path.resolve(ROOT, '../../packages/contracts/specs/gateway-admit.openapi.yaml'),
-].find((p) => fs.existsSync(p));
+// The contract, from @tensorcost/admit-spec (spec/admit/ in this repository).
+const SPEC = findSpec();
 assert.ok(SPEC, 'the admit openapi.yaml was not found');
 const yaml = fs.readFileSync(SPEC, 'utf8');
 
@@ -61,7 +60,6 @@ test('every request in the cassettes is an operation the contract has, under /v1
     const u = new URL(i.request.uri);
     assert.ok(u.pathname.startsWith('/v1/'), `${i.file}: ${u.pathname}`);
     const route = u.pathname.slice('/v1'.length).replace(/[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}/, '{id}').replace('{id}/cancel', '{decision_id}/cancel');
-    if (route.startsWith('/gateway/logs')) continue; // the log push is documented in the log format, not in the admit contract
     assert.ok(ops.has(`${i.request.method} ${route}`), `${i.file}: ${i.request.method} ${route}`);
   }
 });
@@ -111,8 +109,8 @@ test('subscribe asks for budget.threshold_crossed, answers 201 with a Location, 
   assert.equal(del.request.method, 'delete');
 });
 
-test('a log row carries a log_id and only fields the tensorcost log format reads, and the same caller kinds as the check', () => {
-  const fields = new Set(['log_id', 'provider', 'model', 'input_tokens', 'output_tokens', 'cached_input_tokens', 'cache_write_tokens', 'provider_response_id', 'correlation_id', 'started_at', 'ended_at', 'callers', 'gateway_cost_cents', 'status', 'upstream_status']);
+test('a log row fits the contract\'s GatewayLogRow, carries a log_id, and the same caller kinds as the check', () => {
+  const spec = loadSpec(SPEC);
   const check = bodyOf(cassettes.find(([f]) => f === 'check_budget_allow.json')[1].http_interactions[0].request.body.string);
   for (const i of interactions.filter((x) => x.request.uri.includes('/v1/gateway/logs'))) {
     assert.match(i.request.uri, /\?format=tensorcost$/);
@@ -120,7 +118,7 @@ test('a log row carries a log_id and only fields the tensorcost log format reads
     assert.deepEqual(Object.keys(body), ['logs'], 'an array or { logs }, never a bare row');
     assert.equal(body.logs.length, 1);
     const row = body.logs[0];
-    for (const k of Object.keys(row)) assert.ok(fields.has(k), `${i.file}: ${k}`);
+    assert.deepEqual(validate(spec, { $ref: '#/components/schemas/GatewayLogRow' }, row, { strict: true }), [], i.file);
     assert.match(row.log_id, /^wk:[0-9a-f-]{36}$/, 'derived from the decision, so a retried job dedupes');
     assert.equal(row.correlation_id, row.log_id.slice(3));
     assert.deepEqual(row.callers, check.callers);
@@ -136,10 +134,9 @@ test('cancel posts to the fenced cancel route with no body, once', () => {
   assert.equal(bodyOf(response.body.string).cancelled, true);
 });
 
-test('connector.rb carries the exact texts and routes the brief names', () => {
+test('connector.rb carries the exact texts and routes its README describes', () => {
   const rb = fs.readFileSync(path.join(ROOT, 'connector.rb'), 'utf8');
   for (const text of [
-    'https://api.tensorcost.com',
     'Your TensorCost gateway key was refused',
     "Only for calls made with your own provider keys. Workato's built-in AI is billed by Workato and isn't counted here.",
     '/v1/gateway/logs?format=tensorcost',

@@ -10,21 +10,30 @@
 // any other keyword, for the same reason.
 
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
+function packagedSpec() {
+  try {
+    return createRequire(import.meta.url).resolve('@tensorcost/admit-spec/openapi.yaml');
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Where the OpenAPI file sits: TENSORCOST_ADMIT_OPENAPI if set, then
- * spec/admit/openapi.yaml in the integrations repository, then the
- * TensorCost monorepo's source of the same file. Null when none exists.
+ * Where the OpenAPI file sits: TENSORCOST_ADMIT_OPENAPI if set, then the
+ * @tensorcost/admit-spec package this one depends on, then spec/admit in a
+ * checkout of the integrations repository. Null when none exists.
  */
 export function findSpec(env = process.env) {
   const candidates = [
     env.TENSORCOST_ADMIT_OPENAPI,
+    packagedSpec(),
     path.resolve(HERE, '../../spec/admit/openapi.yaml'),
-    path.resolve(HERE, '../../../packages/contracts/specs/gateway-admit.openapi.yaml'),
   ].filter(Boolean);
   return candidates.find((p) => fs.existsSync(p)) ?? null;
 }

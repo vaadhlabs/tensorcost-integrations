@@ -1,6 +1,6 @@
 # The TensorCost admit protocol
 
-Licensed CC-BY-4.0 (see ../LICENSE.md). `openapi.yaml` next to this file and
+Licensed CC-BY-4.0 (see LICENSE.md). `openapi.yaml` next to this file and
 the code in `admit-mock/` and `admit-conformance/` are Apache-2.0.
 
 A gateway (LiteLLM, Azure API Management, Apigee, Kong, or any proxy that can
@@ -9,11 +9,13 @@ go ahead, and does what the answer says. This document says what the answers
 mean and what a client has to do with them. It is written for people building
 that client: a gateway plugin, a policy template, a proxy of your own.
 
-`openapi.yaml` is the machine-readable contract. It is exported from
-TensorCost's own source on every release and is never edited in this
-repository; where this text and the file disagree, the file wins and this text
-has a bug. `admit-mock/` is a local server that answers like TensorCost, and
-`admit-conformance/` holds the cases a client is tested with against it.
+`openapi.yaml` is the machine-readable contract, and this directory is its
+source: TensorCost's server is tested against the published file like any
+other implementation. Where this text and the file disagree, the file wins and
+this text has a bug. Both ship as the npm package `@tensorcost/admit-spec`,
+with example rows under `examples/`. `admit-mock/` is a local server that
+answers like TensorCost, and `admit-conformance/` holds the cases a client is
+tested with against it.
 
 ## The exchange
 
@@ -320,6 +322,24 @@ names such as `run_stop: …` or `model_governance: …`. On `invalid_request` i
 the model. After any of these, or alone, `ignored: …` names what the route
 dropped from the request. It is for logs and people, and its wording can
 change; a client decides on `decision` and `reason`.
+
+## Reporting the call
+
+Admit decides before the call; the gateway reports the call after it, with
+`POST {base}/v1/gateway/logs?format=tensorcost` and the same key. The body is
+an array of rows, or `{ "logs": [...] }`, 1 to 500 of them. Each row is a
+`GatewayLogRow` in `openapi.yaml`: `log_id`, `provider`, `model` and
+`started_at` are required, and `correlation_id` is the one the call was
+admitted with, so the row releases the hold admit placed. A row is identified
+by the connection and its `log_id`, which makes a resend safe: after any
+non-2xx, send the same batch again. A row TensorCost can't read is skipped and
+named in `parse_errors`; the rest are stored. `examples/tensorcost-rows.json`
+holds a row as each integration in this repository writes it.
+
+`input_tokens` is everything the model read, cache reads and writes included.
+`status` is what the gateway answered and is never taken as the provider's
+answer; `upstream_status` is the provider's own status, and only it can show
+that a call with no usage was never billed.
 
 ## Headroom and budget events
 

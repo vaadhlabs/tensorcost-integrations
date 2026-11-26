@@ -297,7 +297,7 @@ test('every operation\'s server URL plus path is a route the mock serves, bare a
       assert.equal(route(method.toUpperCase(), `/api/inference-proxy${path}`)?.operationId, op.operationId);
     }
   }
-  assert.equal(n, 5);
+  assert.equal(n, 6);
   // Without the server's /v1 the path is not a route: that was the bug.
   assert.equal(route('POST', '/gateway/admit'), null);
 });
@@ -346,4 +346,39 @@ test('subscriptions: 201 with a Location, deletable at it only by the key that s
   const under = await call('POST', '/api/inference-proxy/v1/gateway/subscriptions', { url: 'https://hooks.example.com/tc', event_types: ['budget.threshold_crossed'] });
   assert.equal(under.headers.get('location'), `/api/inference-proxy/v1/gateway/subscriptions/${under.json.id}`);
   assert.equal((await call('POST', '/v1/gateway/subscriptions', { url: 'https://x.example', event_types: ['budget.renamed'] })).status, 400);
+});
+
+async function pushLogs(rows, { format = 'tensorcost', key = KEY, path = '/v1/gateway/logs' } = {}) {
+  const res = await fetch(`${url}${path}?format=${format}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
+    body: JSON.stringify(rows),
+  });
+  return { status: res.status, json: await res.json() };
+}
+
+const ROW = { log_id: 'row-1', provider: 'openai', model: 'gpt-4o', input_tokens: 10, output_tokens: 2, started_at: '2026-11-26T00:00:00Z' };
+
+test('a log push stores the rows that fit GatewayLogRow, names the rest, and answers as the contract says', async () => {
+  const res = await pushLogs({ logs: [ROW, { ...ROW, log_id: 'row-2', model: undefined }, 'nope'] });
+  assert.equal(res.status, 200);
+  assert.deepEqual(validate(spec, operationSchemas(spec, 'gatewayLogs').responses['200'], res.json, { strict: true }), []);
+  assert.equal(res.json.inserted, 1);
+  assert.deepEqual(res.json.parse_errors.map((e) => e.index), [1, 2]);
+  assert.match(res.json.parse_errors[0].reason, /missing model/);
+  assert.equal(res.json.parse_errors[1].reason, 'not_an_object');
+});
+
+test('a resent row is deduped by log_id, per key, and the push is also served under /api/inference-proxy', async () => {
+  assert.equal((await pushLogs([ROW])).json.inserted, 1);
+  const again = await pushLogs([ROW], { path: '/api/inference-proxy/v1/gateway/logs' });
+  assert.deepEqual([again.json.inserted, again.json.deduped], [0, 1]);
+  assert.equal((await pushLogs([ROW], { key: 'tcgw_other' })).json.inserted, 1);
+});
+
+test('a log push without a key, a format or rows is refused, and more than 500 rows is a 413', async () => {
+  assert.equal((await pushLogs([ROW], { key: null })).status, 401);
+  assert.equal((await pushLogs([ROW], { format: 'csv' })).status, 400);
+  assert.equal((await pushLogs([])).status, 400);
+  assert.equal((await pushLogs(Array.from({ length: 501 }, (_, i) => ({ ...ROW, log_id: `r${i}` })))).status, 413);
 });

@@ -73,9 +73,6 @@ paths:
         logs TensorCost pulls every 15 minutes. TensorCost never holds a
         call longer than 30 minutes.
       operationId: gatewayAdmit
-      x-mcp:
-        enabled: false
-        reason: "gateway-facing; agents use check_budget_headroom"
       security:
         - gatewayKey: []
       requestBody:
@@ -208,9 +205,6 @@ paths:
         after a gateway refusal or one of the never-billed failures above.
         A call that ran is not cancelled: its spend releases the hold.
       operationId: gatewayAdmitCancel
-      x-mcp:
-        enabled: false
-        reason: "gateway-facing; agents use check_budget_headroom"
       security:
         - gatewayKey: []
       parameters:
@@ -258,9 +252,6 @@ paths:
         is a 400, and a non-2xx means TensorCost couldn't answer. 600 a
         minute per connection.
       operationId: gatewayHeadroom
-      x-mcp:
-        enabled: false
-        reason: "gateway-facing; agents use check_budget_headroom"
       security:
         - gatewayKey: []
       requestBody:
@@ -300,9 +291,6 @@ paths:
         which a webhook trigger (Power Platform) deletes on unsubscribe.
         60 a minute per connection.
       operationId: gatewaySubscribe
-      x-mcp:
-        enabled: false
-        reason: "gateway-facing; agents use check_budget_headroom"
       security:
         - gatewayKey: []
       requestBody:
@@ -339,9 +327,6 @@ paths:
         Deletes one of this connection's own subscriptions. Any other id,
         including another connection's or another workspace's, answers 404.
       operationId: gatewayUnsubscribe
-      x-mcp:
-        enabled: false
-        reason: "gateway-facing; agents use check_budget_headroom"
       security:
         - gatewayKey: []
       parameters:
@@ -361,6 +346,78 @@ paths:
           description: Over the connection's 60 a minute.
         "503":
           description: TensorCost couldn't delete the subscription. Try again shortly.
+  /gateway/logs:
+    post:
+      summary: Report the calls a gateway made
+      description: >-
+        Also served at /api/inference-proxy/v1/gateway/logs. A gateway reports
+        each call it let through, after the call, so the call's spend is
+        counted against the budgets admit checked. `format` says what shape
+        the rows are in: `tensorcost` is the row below, which the Azure APIM,
+        Apigee, Workato and Power Platform integrations write; `litellm` is
+        LiteLLM's own spend-log row and `portkey` Portkey's log export row,
+        each read as those products write them. The body is a JSON array of
+        rows or an object `{ "logs": [...] }`, 1 to 500 rows. A row that
+        can't be read is skipped and named in `parse_errors` by its index and
+        reason; the rest of the batch is still stored. A resent row is not
+        counted twice: a row is identified by the connection and its
+        `log_id`, so after any non-2xx a gateway may send the same batch
+        again. A row's `correlation_id` names the admit answer for the call,
+        which releases the hold admit placed for it once the row is stored.
+        A gateway that reports one call per request (Apigee) is answered 202
+        at once, before the rows are stored, with how many were taken; such a
+        connection sends at most 10 rows a push. 600 pushes a minute per
+        connection.
+      operationId: gatewayLogs
+      security:
+        - gatewayKey: []
+      parameters:
+        - name: format
+          in: query
+          required: true
+          schema: { type: string, enum: [tensorcost, litellm, portkey] }
+          description: The shape of the rows.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GatewayLogPush" }
+            example:
+              - log_id: 0d9c3b52-6f1e-4a43-9f5e-2b7f8c1d4e60
+                provider: azure.ai.openai
+                model: gpt-4o-mini
+                input_tokens: 1200
+                output_tokens: 310
+                cached_input_tokens: 800
+                started_at: "2026-11-26T14:03:11.204Z"
+                ended_at: "2026-11-26T14:03:12.950Z"
+                correlation_id: 0d9c3b52-6f1e-4a43-9f5e-2b7f8c1d4e60
+                upstream_status: 200
+                callers:
+                  - { kind: subscription, id: search-prod }
+      responses:
+        "200":
+          description: The batch was read and its readable rows stored.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GatewayLogsResult" }
+        "202":
+          description: >-
+            A per-call reporter's rows were taken and will be stored within
+            about a second. `refused` counts the rows not taken.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GatewayLogsAccepted" }
+        "400":
+          description: No `format`, an unknown one, or a body that isn't a non-empty array of rows.
+        "401":
+          description: Not a live gateway connection key.
+        "413":
+          description: More than 500 rows, or more than 10 for a per-call reporter. Send smaller batches.
+        "429":
+          description: Over the connection's 600 pushes a minute.
+        "503":
+          description: TensorCost couldn't store the rows right now. Send the batch again; stored rows are not counted twice.
 components:
   securitySchemes:
     gatewayKey:
@@ -368,6 +425,133 @@ components:
       scheme: bearer
       description: The key shown once when the gateway connection was created (tcgw_…).
   schemas:
+    GatewayLogPush:
+      oneOf:
+        - type: array
+          minItems: 1
+          maxItems: 500
+          items: { type: object }
+        - type: object
+          required: [logs]
+          properties:
+            logs:
+              type: array
+              minItems: 1
+              maxItems: 500
+              items: { type: object }
+      description: >-
+        The rows, as an array or under `logs`. With format=tensorcost each row
+        is a GatewayLogRow; with litellm or portkey, that product's own row.
+    GatewayLogRow:
+      type: object
+      required: [log_id, provider, model, started_at]
+      description: >-
+        One call a gateway made, in TensorCost's own row format. Fields that
+        can't be read are treated as absent; a row missing a required field,
+        or whose provider isn't one TensorCost knows, is skipped and named in
+        `parse_errors`. Token counts follow the stored-input convention:
+        `input_tokens` is everything the model read, cache reads and writes
+        included, and `cached_input_tokens` and `cache_write_tokens` are the
+        parts of it that were cache reads and cache writes.
+      properties:
+        log_id:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: >-
+            The gateway's own id for this call (APIM's context.RequestId,
+            Apigee's messageid). With the connection, it identifies the row:
+            the same log_id sent again is the same row.
+        provider:
+          type: string
+          description: >-
+            Who served the call, as OpenTelemetry's gen_ai.provider.name or a
+            common alias: openai, anthropic, aws.bedrock (bedrock),
+            azure.ai.openai (azure, azure_openai), gcp.vertex_ai (vertex),
+            matched case-insensitively.
+        model:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: The model the call ran on, as the provider names it (for an Azure deployment, the model behind it).
+        input_tokens: { type: integer, minimum: 0, description: "Everything the model read. Missing counts as 0." }
+        output_tokens: { type: integer, minimum: 0, description: "Missing counts as 0." }
+        cached_input_tokens: { type: integer, minimum: 0, description: "Of input_tokens, the cache reads." }
+        cache_write_tokens: { type: integer, minimum: 0, description: "Of input_tokens, the cache writes." }
+        provider_response_id: { type: string, maxLength: 200, description: "The provider's own id for the response, when the gateway read it." }
+        correlation_id:
+          type: string
+          maxLength: 200
+          description: >-
+            The correlation_id this call was admitted with. It ties the row to
+            the admit answer and releases that answer's hold. Never used to
+            tell rows apart.
+        started_at:
+          type: [string, number]
+          description: When the call started, as an ISO 8601 time or Unix seconds or milliseconds.
+        ended_at:
+          type: [string, number]
+          description: When the call ended, in the same forms.
+        callers:
+          type: array
+          maxItems: 16
+          items: { $ref: "#/components/schemas/GatewayCaller" }
+          description: Who made the call, as sent to admit. Past 16, the rest are dropped.
+        gateway_cost_cents:
+          type: number
+          minimum: 0
+          description: What the gateway itself priced the call at, in US cents, when it prices calls.
+        status:
+          type: [integer, string]
+          description: >-
+            What the gateway logged for the call: the HTTP status it answered,
+            or "success" or "failure". Never read as the provider's answer,
+            since a gateway's own timeout or policy refusal looks the same.
+        upstream_status:
+          type: integer
+          minimum: 100
+          maximum: 599
+          description: >-
+            The provider's own HTTP status, when the gateway read it off the
+            provider's response. Only this can show that a call with no usage
+            was never billed.
+        customer:
+          type: string
+          maxLength: 128
+          description: >-
+            The end customer the call was for, the same id admit was sent.
+            Trimmed; one with control characters or over 128 characters is
+            left off and the row is still stored.
+    GatewayLogsResult:
+      type: object
+      required: [received, inserted, deduped, skipped, parse_errors]
+      properties:
+        received: { type: integer, description: "Rows in the push." }
+        inserted: { type: integer, description: "Rows stored for the first time." }
+        deduped: { type: integer, description: "Rows already stored by an earlier push." }
+        skipped: { type: integer, description: "Rows read but not stored, such as a call that wasn't a model call." }
+        parse_errors:
+          type: array
+          items:
+            type: object
+            required: [index, reason]
+            properties:
+              index: { type: integer, description: "The row's position in the push, from 0." }
+              reason:
+                type: string
+                description: >-
+                  Why it couldn't be read. For format=tensorcost: not_an_object,
+                  no_log_id, unknown_provider, no_model, no_started_at.
+    GatewayLogsAccepted:
+      type: object
+      required: [received, buffered, refused, refused_reasons]
+      properties:
+        received: { type: integer }
+        buffered: { type: integer, description: "Rows taken; they are stored within about a second." }
+        refused: { type: integer, description: "Rows not taken." }
+        refused_reasons:
+          type: object
+          description: The refused rows by reason, row_too_large (over 4 KB) or buffer_full.
     GatewayHeadroomRequest:
       type: object
       description: Everything is optional; an empty body asks about the whole workspace.
@@ -766,8 +950,7 @@ components:
             format: uuid
           description: >-
             Allow only. The budgets that would have refused this call had the
-            workspace held gateway enforcement (`feature.enforce_gateway`,
-            the V6 vertical): budgets warn on every plan and refuse only at an
+            workspace held gateway enforcement: budgets warn on every plan and refuse only at an
             enforcement point the workspace holds. The call runs and nothing
             is held for it. Absent when nothing would refuse.
         cache_ttl_seconds:

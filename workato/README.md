@@ -24,8 +24,8 @@ built-in AI is billed by Workato and isn't counted in TensorCost.
    Workato, and copy its key when it is shown. It starts with `tcgw_` and is
    shown once. An SDK token doesn't work here.
 2. In Workato, create a connection of this connector:
-   - **TensorCost API URL**: `https://api.tensorcost.com`, or the host
-     TensorCost gave you.
+   - **TensorCost API URL**: your TensorCost installation's address, as
+     Connect > Gateways shows it, e.g. `https://tensorcost.example.com`.
    - **Gateway key**: the `tcgw_` key.
    - **Name for this key**: optional. It is sent as the caller of kind `key`
      so an admin can map it to a team under Connect > Gateways > Map to team
