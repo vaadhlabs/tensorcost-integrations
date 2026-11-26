@@ -14,7 +14,7 @@ import { runCompare } from "./commands/compare.js";
 import { runModels } from "./commands/models.js";
 import { loadModelRates } from "./pricing.js";
 
-const VERSION = "0.2.7";
+const VERSION = "0.3.0";
 
 // Piped output (e.g. `tc models | head`) closes stdout early; ignore EPIPE.
 process.stdout.on("error", (err: NodeJS.ErrnoException) => {

@@ -1,34 +1,50 @@
 # TensorCost integrations
 
-Open-source pieces of TensorCost that sit in a customer's request path or define
-how others talk to us: gateway integrations, the admit protocol, the CLI and the
-OpenTelemetry package.
+The open-source pieces of TensorCost that sit in a customer's request path or
+define how others talk to it: gateway integrations, the admit protocol, the
+CLI and the OpenTelemetry mapping. This repository is their only source.
+TensorCost's own product depends on the packages published from here, at
+pinned versions, the same way you would.
 
-- `litellm/`: a LiteLLM proxy guardrail that checks TensorCost budgets
-  before each call, and a logger that reports each call's spend back
-  (Python package `tensorcost-litellm`).
-- `azure-apim/`: Azure API Management policy fragments that check TensorCost
-  budgets before each call, follow its decision, and read pushed token
-  quotas.
-- `apigee/`: two Apigee shared flows. One asks TensorCost before each call
-  and follows its decision; the other counts each call's tokens against the
-  pushed product quota and reports the call back.
-- `kong/`: how to point Kong Gateway's OpenTelemetry plugin at TensorCost,
-  so each AI call Kong proxies is counted with the consumer that made it.
-- `workato/`: a Workato custom connector with budget check, spend and
-  headroom actions and a budget-threshold trigger.
-- `power-platform/`: a Power Platform custom connector (Power Automate and
-  Copilot Studio) with the same actions and trigger.
-- `spec/admit/`: the admit protocol those integrations speak, as an open
-  specification and its OpenAPI file.
-- `admit-mock/`: a local server that answers like TensorCost's admit route
-  (npm package `@tensorcost/admit-mock`), and `admit-conformance/`: the cases
-  a gateway client is tested with against it.
+| Directory | What it is | Published as |
+| --- | --- | --- |
+| `spec/admit/` | The admit protocol: what a gateway asks TensorCost before a model call, how it reports the call after, and its OpenAPI file | npm `@tensorcost/admit-spec` |
+| `admit-mock/` | A local server that answers like TensorCost's admit and log routes | npm `@tensorcost/admit-mock` |
+| `admit-conformance/` | The cases a gateway client is tested with against the mock | npm `@tensorcost/admit-conformance` |
+| `packages/gateway-templates/` | Renders the APIM, Apigee and LiteLLM templates for your own URL and fail mode | npm `@tensorcost/gateway-templates` |
+| `azure-apim/` | Azure API Management policy fragments that check budgets before each call | rendered by gateway-templates |
+| `apigee/` | Apigee shared flows: one asks before each call, one counts tokens and reports the call | rendered by gateway-templates |
+| `litellm/` | A LiteLLM proxy guardrail and spend logger | PyPI `tensorcost-litellm` |
+| `kong/` | How to point Kong Gateway's OpenTelemetry plugin at TensorCost | a guide |
+| `workato/` | A Workato custom connector: budget check, spend, headroom, a budget trigger | import `connector.rb` |
+| `power-platform/` | A Power Automate and Copilot Studio custom connector with the same actions | import the connector |
+| `packages/otel-genai-cost/` | Reads OpenTelemetry GenAI spans into one call shape with cost-relevant fields | npm `@tensorcost/otel-genai-cost` |
+| `packages/cli/` | Estimate and compare LLM prompt costs from the command line | npm `@tensorcost/cli` |
 
-This repository is published from the TensorCost monorepo by a scripted export
-of an allowlist of paths. Its history starts at the first export.
+Every integration takes the TensorCost URL of your own installation; none
+assumes a hosted service.
+
+## Building and testing
+
+Node 20.12 or later and pnpm 9:
+
+```sh
+pnpm install
+pnpm build
+pnpm test
+```
+
+The Python, Ruby and Apigee pieces have their own test commands in their
+READMEs, and `.github/workflows/ci.yml` runs all of them.
+
+## Releases
+
+Each package is released by pushing a tag `<name>-v<version>` (for example
+`gateway-templates-v0.1.0` or `litellm-v0.1.5`). The release workflows check
+that the tag matches the package's version, run the package's tests and
+`tools/guard.mjs` on the exact tarball, and publish with provenance.
 
 Repository: https://github.com/vaadhlabs/tensorcost-integrations
 
 Code is Apache-2.0. The admit specification's prose is CC-BY-4.0, see
-spec/LICENSE.md.
+spec/admit/LICENSE.md.

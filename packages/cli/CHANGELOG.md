@@ -2,12 +2,17 @@
 
 All notable changes to `@tensorcost/cli` are documented here.
 
-## [Unreleased]
+## [0.3.0] — unreleased
 
 ### Changed
 
 - The published package is a single bundled `dist/index.js`, still with no runtime dependencies.
 - `--help` and `--version` no longer load the rate catalogue first.
+- The source now lives in [tensorcost-integrations](https://github.com/vaadhlabs/tensorcost-integrations) and is published from there.
+
+### Removed
+
+- `TENSORCOST_INSTANCE`. Set `TENSORCOST_CATALOG_URL` to read the catalogue from another address.
 
 ## [0.2.7] — 2026-08-14
 

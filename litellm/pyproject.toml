@@ -23,7 +23,9 @@ proxy = ["litellm[proxy]>=1.60"]
 test = ["pytest>=8", "fastapi>=0.110"]
 
 [project.urls]
-Homepage = "https://tensorcost.com"
+Homepage = "https://github.com/vaadhlabs/tensorcost-integrations/tree/main/litellm"
+Repository = "https://github.com/vaadhlabs/tensorcost-integrations"
+Issues = "https://github.com/vaadhlabs/tensorcost-integrations/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tensorcost_litellm"]

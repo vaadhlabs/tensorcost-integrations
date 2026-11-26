@@ -1,6 +1,6 @@
 # @tensorcost/cli
 
-Estimate and compare LLM prompt costs from the command line. Works offline with a bundled seed catalogue; when online, refreshes from TensorCost's public CloudFront snapshot (no API key required).
+Estimate and compare LLM prompt costs from the command line. Works offline with a bundled seed catalogue; when online, refreshes from TensorCost's published rate catalogue (no API key required).
 
 ```
 npx @tensorcost/cli estimate --prompt-file prompts/rerank.v3.txt \
@@ -120,7 +120,7 @@ tensorcost models --json
 The CLI does **not** hardcode the full provider catalogue. On each run it:
 
 1. Starts from a small bundled seed (`models.json`) so offline / CI works with zero network.
-2. Merges the daily CloudFront snapshot at `https://console.tensorcost.com/cli/model-rates.json` (TensorCost's own rates, with LiteLLM's catalogue filling the gaps), cached for 1 hour at `~/.tensorcost/rates-cache.json`.
+2. Merges the daily rate catalogue at `https://console.tensorcost.com/cli/model-rates.json` (TensorCost's own rates, with LiteLLM's catalogue filling the gaps), cached for 1 hour at `~/.tensorcost/rates-cache.json`.
 
 Use full ids (`openai/gpt-4o`). Bare slugs (`gpt-4o`) resolve when unique; if several providers match, the CLI lists the candidates and exits.
 
@@ -130,7 +130,7 @@ Run `tensorcost models` (or `tensorcost models --provider anthropic`) to see wha
 
 | Variable | Description |
 |----------|-------------|
-| `TENSORCOST_CATALOG_URL` | Override the catalogue URL. Defaults to `https://console.tensorcost.com/cli/model-rates.json`. Point at staging with `https://console.<env>.tensorcost.com/cli/model-rates.json`. |
+| `TENSORCOST_CATALOG_URL` | Override the catalogue URL, for instance to a copy you host yourself. Defaults to `https://console.tensorcost.com/cli/model-rates.json`. |
 | `TENSORCOST_OFFLINE` | Set to `1` / `true` to skip the network fetch and use the bundled seed (plus any on-disk cache). |
 
 ### Live rates

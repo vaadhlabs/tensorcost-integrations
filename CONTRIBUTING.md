@@ -16,17 +16,30 @@ merged.
 
 ## How pull requests land
 
-This repository is a published copy. The source of truth is a private monorepo,
-and the maintainers port accepted pull requests back into it by hand. Expect the
-change to reach this repository again on the next release export, with your
-authorship kept in the commit. We don't merge directly here, so the pull
-request may be closed once it has been ported.
+This repository is the source of everything in it. Pull requests are reviewed
+and merged here, and the packages are published from here. TensorCost's own
+product uses the published packages like any other user, so a change reaches
+it through a release.
 
 ## Before you open a pull request
 
-Run the tests for the package you changed. Keep one change per pull request.
-For anything larger than a bug fix, open an issue first so we can agree on the
-direction.
+Run the tests for the package you changed (`pnpm install`, then `pnpm test`
+for the Node packages, or the commands in that directory's README). Keep one
+change per pull request. For anything larger than a bug fix, open an issue
+first so we can agree on the direction.
+
+A change to the admit protocol (`spec/admit/`) is a change to a public
+contract: say in the pull request what an existing client sees differently.
+
+If you change a renderer in `packages/gateway-templates`, regenerate the
+committed templates with `pnpm --filter @tensorcost/gateway-templates build &&
+pnpm --filter @tensorcost/gateway-templates reference`. CI fails when
+`azure-apim/`, `apigee/` or `litellm/ci/tensorcost.yaml` differ from the
+renderer's output.
+
+CI also runs `tools/guard.mjs` over every change and every package before it
+is published. It refuses secrets, cloud account ids and internal host names;
+if it flags your change, it names the file and line but not the value.
 
 ## Security
 
