@@ -16,7 +16,16 @@ The files here are rendered for a placeholder host
 (`https://tensorcost.example.com`) and the open fail mode. TensorCost's console
 (Connect › Gateways, on an Azure API Management connection) renders the same
 files in your browser with your workspace's URL and fail mode, your token
-quotas and your deployment map.
+quotas and your deployment map. Without the console, render them yourself
+with `@tensorcost/gateway-templates`, the renderer these files come from:
+
+```sh
+npx @tensorcost/gateway-templates apim --base-url https://tensorcost.example.com/api/inference-proxy \
+  --fail-mode closed --deployment prod-mini=gpt-4o-mini --out ./fragments
+```
+
+Don't edit the files here by hand: CI fails when they aren't the renderer's
+output.
 
 No prompt or response content is sent to TensorCost. The fragment reads the
 request body only for `model`, `max_tokens` (or `max_completion_tokens`) and

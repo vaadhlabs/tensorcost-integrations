@@ -25,7 +25,16 @@ below; the whole contract is `spec/admit/openapi.yaml` in this repository. The b
 are rendered for the placeholder host `tensorcost.example.com` with fail mode
 `open`. Connect › Gateways in the TensorCost console renders the same bundles
 with your workspace's URL, fail mode and VerifyAPIKey policy, and gives them
-to you as zips.
+to you as zips. Without the console, render them yourself with
+`@tensorcost/gateway-templates`, the renderer these bundles come from:
+
+```sh
+npx @tensorcost/gateway-templates apigee --base-url https://tensorcost.example.com/api/inference-proxy \
+  --fail-mode closed --verify-api-key-policy Verify-API-Key-1 --zip --out ./bundles
+```
+
+Don't edit the bundles here by hand: CI fails when they aren't the renderer's
+output.
 
 Apache-2.0.
 
